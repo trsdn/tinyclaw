@@ -79,7 +79,7 @@ export async function invokeAgent(
 
     if (provider === 'copilot-sdk') {
         log('INFO', `Using GitHub Copilot SDK (agent: ${agentId})`);
-        return await invokeCopilotSdk(agentId, agent.model, message, workingDir, shouldReset);
+        return await invokeCopilotSdk(agentId, agent.model, message, workingDir, shouldReset, agent.reasoning_effort);
     } else if (provider === 'copilot') {
         log('INFO', `Using GitHub Copilot CLI (agent: ${agentId})`);
 

@@ -133,25 +133,29 @@ if [ "$PROVIDER" = "anthropic" ]; then
 elif [ "$PROVIDER" = "copilot" ] || [ "$PROVIDER" = "copilot-sdk" ]; then
     echo "Which GitHub Copilot model?"
     echo ""
-    echo "  1) claude-sonnet-4.5   (default, recommended)"
-    echo "  2) claude-opus-4.6     (smartest)"
-    echo "  3) gpt-4.1             (OpenAI)"
-    echo "  4) gpt-5.2-codex       (OpenAI Codex)"
-    echo "  5) gemini-2.5-pro      (Google)"
-    echo "  6) gemini-3-flash      (Google, fast)"
-    echo "  7) grok-code-fast-1    (xAI)"
-    echo "  8) Custom  (enter model name)"
+    echo "  1) claude-sonnet-4.5        (default, recommended)"
+    echo "  2) claude-opus-4.6          (smartest)"
+    echo "  3) claude-opus-4.6-fast     (2.5x faster Opus)"
+    echo "  4) claude-sonnet-4.6"
+    echo "  5) gpt-4.1                  (OpenAI)"
+    echo "  6) gpt-5.2-codex            (OpenAI Codex)"
+    echo "  7) gemini-2.5-pro           (Google)"
+    echo "  8) gemini-3-flash           (Google, fast)"
+    echo "  9) grok-code-fast-1         (xAI)"
+    echo " 10) Custom  (enter model name)"
     echo ""
-    read -rp "Choose [1-8, default: 1]: " MODEL_CHOICE
+    read -rp "Choose [1-10, default: 1]: " MODEL_CHOICE
 
     case "$MODEL_CHOICE" in
         2) MODEL="claude-opus-4.6" ;;
-        3) MODEL="gpt-4.1" ;;
-        4) MODEL="gpt-5.2-codex" ;;
-        5) MODEL="gemini-2.5-pro" ;;
-        6) MODEL="gemini-3-flash" ;;
-        7) MODEL="grok-code-fast-1" ;;
-        8)
+        3) MODEL="claude-opus-4.6-fast" ;;
+        4) MODEL="claude-sonnet-4.6" ;;
+        5) MODEL="gpt-4.1" ;;
+        6) MODEL="gpt-5.2-codex" ;;
+        7) MODEL="gemini-2.5-pro" ;;
+        8) MODEL="gemini-3-flash" ;;
+        9) MODEL="grok-code-fast-1" ;;
+        10)
             read -rp "Enter model name: " MODEL
             if [ -z "$MODEL" ]; then
                 echo -e "${RED}Model name required${NC}"
@@ -325,14 +329,15 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
                 *) NEW_MODEL="sonnet" ;;
             esac
         elif [ "$NEW_PROVIDER" = "copilot" ] || [ "$NEW_PROVIDER" = "copilot-sdk" ]; then
-            echo "  Model: 1) claude-sonnet-4.5  2) claude-opus-4.6  3) gpt-4.1  4) gpt-5.2-codex  5) gemini-2.5-pro  6) Custom"
-            read -rp "  Choose [1-6, default: 1]: " NEW_MODEL_CHOICE
+            echo "  Model: 1) claude-sonnet-4.5  2) claude-opus-4.6  3) claude-opus-4.6-fast  4) gpt-4.1  5) gpt-5.2-codex  6) gemini-2.5-pro  7) Custom"
+            read -rp "  Choose [1-7, default: 1]: " NEW_MODEL_CHOICE
             case "$NEW_MODEL_CHOICE" in
                 2) NEW_MODEL="claude-opus-4.6" ;;
-                3) NEW_MODEL="gpt-4.1" ;;
-                4) NEW_MODEL="gpt-5.2-codex" ;;
-                5) NEW_MODEL="gemini-2.5-pro" ;;
-                6) read -rp "  Enter model name: " NEW_MODEL ;;
+                3) NEW_MODEL="claude-opus-4.6-fast" ;;
+                4) NEW_MODEL="gpt-4.1" ;;
+                5) NEW_MODEL="gpt-5.2-codex" ;;
+                6) NEW_MODEL="gemini-2.5-pro" ;;
+                7) read -rp "  Enter model name: " NEW_MODEL ;;
                 *) NEW_MODEL="claude-sonnet-4.5" ;;
             esac
         elif [ "$NEW_PROVIDER" = "opencode" ]; then

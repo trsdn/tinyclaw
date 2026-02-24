@@ -5,6 +5,7 @@ export interface AgentConfig {
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
+    reasoning_effort?: string; // 'low' | 'medium' | 'high' | 'xhigh' (copilot-sdk only)
 }
 
 export interface TeamConfig {
@@ -122,7 +123,9 @@ export const CODEX_MODEL_IDS: Record<string, string> = {
 // GitHub Copilot CLI model IDs (passed via --model flag).
 export const COPILOT_MODEL_IDS: Record<string, string> = {
     // OpenAI models
+    'gpt-4o': 'gpt-4o',
     'gpt-4.1': 'gpt-4.1',
+    'gpt-5': 'gpt-5',
     'gpt-5-mini': 'gpt-5-mini',
     'gpt-5.1': 'gpt-5.1',
     'gpt-5.1-codex': 'gpt-5.1-codex',
@@ -133,11 +136,13 @@ export const COPILOT_MODEL_IDS: Record<string, string> = {
     'gpt-5.3-codex': 'gpt-5.3-codex',
     // Anthropic models
     'claude-haiku-4.5': 'claude-haiku-4.5',
-    'claude-sonnet-4.0': 'claude-sonnet-4.0',
+    'claude-sonnet-4': 'claude-sonnet-4',
+    'claude-sonnet-4.0': 'claude-sonnet-4',
     'claude-sonnet-4.5': 'claude-sonnet-4.5',
     'claude-sonnet-4.6': 'claude-sonnet-4.6',
     'claude-opus-4.5': 'claude-opus-4.5',
     'claude-opus-4.6': 'claude-opus-4.6',
+    'claude-opus-4.6-fast': 'claude-opus-4.6-fast',
     // Google models
     'gemini-2.5-pro': 'gemini-2.5-pro',
     'gemini-3-flash': 'gemini-3-flash',
@@ -152,10 +157,14 @@ export const COPILOT_MODEL_IDS: Record<string, string> = {
     'gpt': 'gpt-4.1',
     'sonnet': 'claude-sonnet-4.5',
     'opus': 'claude-opus-4.6',
+    'opus-fast': 'claude-opus-4.6-fast',
     'haiku': 'claude-haiku-4.5',
     'gemini': 'gemini-2.5-pro',
     'grok': 'grok-code-fast-1',
 };
+
+// Reasoning effort levels for Copilot SDK (supported by some models).
+export type CopilotReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 // OpenCode model IDs in provider/model format (passed via --model / -m flag).
 // Falls back to the raw model string from settings if no mapping is found.

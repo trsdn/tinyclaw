@@ -9,6 +9,7 @@
 
 import { log } from './logging';
 import { resolveCopilotModel } from './config';
+import { CopilotReasoningEffort } from './types';
 
 // Lazy-loaded SDK module reference
 let sdkModule: any = null;
@@ -49,10 +50,12 @@ export async function invokeCopilotSdk(
     model: string,
     message: string,
     workingDir: string,
-    shouldReset: boolean
+    shouldReset: boolean,
+    reasoningEffort?: string
 ): Promise<string> {
     const client = await getClient();
     const modelId = resolveCopilotModel(model);
+    const effort = reasoningEffort as CopilotReasoningEffort | undefined;
 
     // Handle conversation continuation via session IDs
     const existingSessionId = agentSessionIds.get(agentId);
@@ -82,12 +85,14 @@ export async function invokeCopilotSdk(
     }
 
     if (!session) {
-        // Create new session
-        session = await client.createSession({
-            model: modelId,
-        });
+        // Create new session with optional reasoning effort
+        const sessionConfig: any = { model: modelId };
+        if (effort) {
+            sessionConfig.reasoningEffort = effort;
+        }
+        session = await client.createSession(sessionConfig);
         agentSessionIds.set(agentId, session.sessionId);
-        log('INFO', `Created Copilot SDK session ${session.sessionId} for agent: ${agentId} [model: ${modelId}]`);
+        log('INFO', `Created Copilot SDK session ${session.sessionId} for agent: ${agentId} [model: ${modelId}${effort ? `, effort: ${effort}` : ''}]`);
     }
 
     // Send message and wait for response

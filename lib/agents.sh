@@ -160,23 +160,27 @@ agent_add() {
         esac
     elif [ "$AGENT_PROVIDER" = "copilot" ] || [ "$AGENT_PROVIDER" = "copilot-sdk" ]; then
         echo "Model:"
-        echo "  1) claude-sonnet-4.5   (default, recommended)"
-        echo "  2) claude-opus-4.6     (smartest)"
-        echo "  3) gpt-4.1             (OpenAI)"
-        echo "  4) gpt-5.2-codex       (OpenAI Codex)"
-        echo "  5) gemini-2.5-pro      (Google)"
-        echo "  6) gemini-3-flash      (Google, fast)"
-        echo "  7) grok-code-fast-1    (xAI)"
-        echo "  8) Custom (enter model name)"
-        read -rp "Choose [1-8, default: 1]: " AGENT_MODEL_CHOICE
+        echo "  1) claude-sonnet-4.5        (default, recommended)"
+        echo "  2) claude-opus-4.6          (smartest)"
+        echo "  3) claude-opus-4.6-fast     (2.5x faster Opus)"
+        echo "  4) claude-sonnet-4.6"
+        echo "  5) gpt-4.1                  (OpenAI)"
+        echo "  6) gpt-5.2-codex            (OpenAI Codex)"
+        echo "  7) gemini-2.5-pro           (Google)"
+        echo "  8) gemini-3-flash           (Google, fast)"
+        echo "  9) grok-code-fast-1         (xAI)"
+        echo " 10) Custom (enter model name)"
+        read -rp "Choose [1-10, default: 1]: " AGENT_MODEL_CHOICE
         case "$AGENT_MODEL_CHOICE" in
             2) AGENT_MODEL="claude-opus-4.6" ;;
-            3) AGENT_MODEL="gpt-4.1" ;;
-            4) AGENT_MODEL="gpt-5.2-codex" ;;
-            5) AGENT_MODEL="gemini-2.5-pro" ;;
-            6) AGENT_MODEL="gemini-3-flash" ;;
-            7) AGENT_MODEL="grok-code-fast-1" ;;
-            8) read -rp "Enter model name: " AGENT_MODEL ;;
+            3) AGENT_MODEL="claude-opus-4.6-fast" ;;
+            4) AGENT_MODEL="claude-sonnet-4.6" ;;
+            5) AGENT_MODEL="gpt-4.1" ;;
+            6) AGENT_MODEL="gpt-5.2-codex" ;;
+            7) AGENT_MODEL="gemini-2.5-pro" ;;
+            8) AGENT_MODEL="gemini-3-flash" ;;
+            9) AGENT_MODEL="grok-code-fast-1" ;;
+            10) read -rp "Enter model name: " AGENT_MODEL ;;
             *) AGENT_MODEL="claude-sonnet-4.5" ;;
         esac
     elif [ "$AGENT_PROVIDER" = "opencode" ]; then
