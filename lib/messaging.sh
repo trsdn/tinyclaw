@@ -10,9 +10,22 @@ send_message() {
 
     log "[$source] Sending: ${message:0:50}..."
 
+    # Read API key for authentication
+    local api_key=""
+    if [ "${TINYCLAW_API_AUTH:-}" != "none" ]; then
+        api_key="${TINYCLAW_API_KEY:-}"
+        if [ -z "$api_key" ] && [ -f "$SETTINGS_FILE" ]; then
+            api_key=$(jq -r '.api.api_key // empty' "$SETTINGS_FILE" 2>/dev/null)
+        fi
+    fi
+
+    local curl_args=(-s -X POST "${api_url}/api/message" -H "Content-Type: application/json")
+    if [ -n "$api_key" ]; then
+        curl_args+=(-H "Authorization: Bearer ${api_key}")
+    fi
+
     local result
-    result=$(curl -s -X POST "${api_url}/api/message" \
-        -H "Content-Type: application/json" \
+    result=$(curl "${curl_args[@]}" \
         -d "$(jq -n \
             --arg message "$message" \
             --arg channel "cli" \

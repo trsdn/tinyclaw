@@ -10,6 +10,7 @@ import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
 import { ensureSenderPaired } from '../lib/pairing';
+import { apiHeaders, apiJsonHeaders } from '../lib/api-auth';
 
 const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 const API_BASE = `http://localhost:${API_PORT}`;
@@ -333,7 +334,7 @@ client.on('message_create', async (message: Message) => {
         // Write to queue via API
         await fetch(`${API_BASE}/api/message`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: apiJsonHeaders(),
             body: JSON.stringify({
                 channel: 'whatsapp',
                 sender,
@@ -375,7 +376,7 @@ async function checkOutgoingQueue(): Promise<void> {
     processingOutgoingQueue = true;
 
     try {
-        const res = await fetch(`${API_BASE}/api/responses/pending?channel=whatsapp`);
+        const res = await fetch(`${API_BASE}/api/responses/pending?channel=whatsapp`, { headers: apiHeaders() });
         if (!res.ok) return;
         const responses = await res.json() as any[];
 
@@ -427,10 +428,10 @@ async function checkOutgoingQueue(): Promise<void> {
                     log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${files.length > 0 ? `, ${files.length} file(s)` : ''})`);
 
                     if (pending) pendingMessages.delete(messageId);
-                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
+                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST', headers: apiHeaders() });
                 } else {
                     log('WARN', `No pending message for ${messageId} and no senderId, acking`);
-                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
+                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST', headers: apiHeaders() });
                 }
             } catch (error) {
                 log('ERROR', `Error processing response ${resp.id}: ${(error as Error).message}`);

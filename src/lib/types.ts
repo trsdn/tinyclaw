@@ -60,6 +60,10 @@ export interface Settings {
     };
     agents?: Record<string, AgentConfig>;
     teams?: Record<string, TeamConfig>;
+    api?: {
+        api_key?: string;          // Bearer token for API auth (auto-generated if missing)
+        bind_host?: string;        // Default: '127.0.0.1' (localhost only)
+    };
     monitoring?: {
         heartbeat_interval?: number;
     };

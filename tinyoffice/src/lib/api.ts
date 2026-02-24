@@ -1,9 +1,14 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3777";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const authHeaders: Record<string, string> = {};
+  if (API_KEY) {
+    authHeaders["Authorization"] = `Bearer ${API_KEY}`;
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders, ...options?.headers },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -180,7 +185,10 @@ export function subscribeToEvents(
   onEvent: (event: EventData) => void,
   onError?: (err: Event) => void
 ): () => void {
-  const es = new EventSource(`${API_BASE}/api/events/stream`);
+  const sseUrl = API_KEY
+    ? `${API_BASE}/api/events/stream?api_key=${encodeURIComponent(API_KEY)}`
+    : `${API_BASE}/api/events/stream`;
+  const es = new EventSource(sseUrl);
 
   const handler = (e: MessageEvent) => {
     try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
