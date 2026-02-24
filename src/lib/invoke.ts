@@ -2,9 +2,10 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
+import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, resolveCopilotModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
+import { invokeCopilotSdk } from './copilot-sdk';
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -76,7 +77,30 @@ export async function invokeAgent(
 
     const provider = agent.provider || 'anthropic';
 
-    if (provider === 'openai') {
+    if (provider === 'copilot-sdk') {
+        log('INFO', `Using GitHub Copilot SDK (agent: ${agentId})`);
+        return await invokeCopilotSdk(agentId, agent.model, message, workingDir, shouldReset);
+    } else if (provider === 'copilot') {
+        log('INFO', `Using GitHub Copilot CLI (agent: ${agentId})`);
+
+        const continueConversation = !shouldReset;
+
+        if (shouldReset) {
+            log('INFO', `🔄 Resetting Copilot conversation for agent: ${agentId}`);
+        }
+
+        const modelId = resolveCopilotModel(agent.model);
+        const copilotArgs = ['-p', message];
+        if (modelId) {
+            copilotArgs.push('--model', modelId);
+        }
+        if (continueConversation) {
+            copilotArgs.push('--resume');
+        }
+        copilotArgs.push('--allow-all-tools');
+
+        return await runCommand('copilot', copilotArgs, workingDir);
+    } else if (provider === 'openai') {
         log('INFO', `Using Codex CLI (agent: ${agentId})`);
 
         const shouldResume = !shouldReset;

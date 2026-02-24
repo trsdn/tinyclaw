@@ -84,13 +84,17 @@ echo ""
 echo "  1) Anthropic (Claude)  (recommended)"
 echo "  2) OpenAI (Codex/GPT)"
 echo "  3) OpenCode"
+echo "  4) GitHub Copilot (CLI)"
+echo "  5) GitHub Copilot (SDK)"
 echo ""
-read -rp "Choose [1-3]: " PROVIDER_CHOICE
+read -rp "Choose [1-5]: " PROVIDER_CHOICE
 
 case "$PROVIDER_CHOICE" in
     1) PROVIDER="anthropic" ;;
     2) PROVIDER="openai" ;;
     3) PROVIDER="opencode" ;;
+    4) PROVIDER="copilot" ;;
+    5) PROVIDER="copilot-sdk" ;;
     *)
         echo -e "${RED}Invalid choice${NC}"
         exit 1
@@ -123,6 +127,38 @@ if [ "$PROVIDER" = "anthropic" ]; then
             echo -e "${RED}Invalid choice${NC}"
             exit 1
             ;;
+    esac
+    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo ""
+elif [ "$PROVIDER" = "copilot" ] || [ "$PROVIDER" = "copilot-sdk" ]; then
+    echo "Which GitHub Copilot model?"
+    echo ""
+    echo "  1) claude-sonnet-4.5   (default, recommended)"
+    echo "  2) claude-opus-4.6     (smartest)"
+    echo "  3) gpt-4.1             (OpenAI)"
+    echo "  4) gpt-5.2-codex       (OpenAI Codex)"
+    echo "  5) gemini-2.5-pro      (Google)"
+    echo "  6) gemini-3-flash      (Google, fast)"
+    echo "  7) grok-code-fast-1    (xAI)"
+    echo "  8) Custom  (enter model name)"
+    echo ""
+    read -rp "Choose [1-8, default: 1]: " MODEL_CHOICE
+
+    case "$MODEL_CHOICE" in
+        2) MODEL="claude-opus-4.6" ;;
+        3) MODEL="gpt-4.1" ;;
+        4) MODEL="gpt-5.2-codex" ;;
+        5) MODEL="gemini-2.5-pro" ;;
+        6) MODEL="gemini-3-flash" ;;
+        7) MODEL="grok-code-fast-1" ;;
+        8)
+            read -rp "Enter model name: " MODEL
+            if [ -z "$MODEL" ]; then
+                echo -e "${RED}Model name required${NC}"
+                exit 1
+            fi
+            ;;
+        *) MODEL="claude-sonnet-4.5" ;;
     esac
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
@@ -270,11 +306,13 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
         read -rp "  Display name: " NEW_AGENT_NAME
         [ -z "$NEW_AGENT_NAME" ] && NEW_AGENT_NAME="$NEW_AGENT_ID"
 
-        echo "  Provider: 1) Anthropic  2) OpenAI  3) OpenCode"
-        read -rp "  Choose [1-3, default: 1]: " NEW_PROVIDER_CHOICE
+        echo "  Provider: 1) Anthropic  2) OpenAI  3) OpenCode  4) Copilot (CLI)  5) Copilot (SDK)"
+        read -rp "  Choose [1-5, default: 1]: " NEW_PROVIDER_CHOICE
         case "$NEW_PROVIDER_CHOICE" in
             2) NEW_PROVIDER="openai" ;;
             3) NEW_PROVIDER="opencode" ;;
+            4) NEW_PROVIDER="copilot" ;;
+            5) NEW_PROVIDER="copilot-sdk" ;;
             *) NEW_PROVIDER="anthropic" ;;
         esac
 
@@ -285,6 +323,17 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
                 2) NEW_MODEL="opus" ;;
                 3) read -rp "  Enter model name: " NEW_MODEL ;;
                 *) NEW_MODEL="sonnet" ;;
+            esac
+        elif [ "$NEW_PROVIDER" = "copilot" ] || [ "$NEW_PROVIDER" = "copilot-sdk" ]; then
+            echo "  Model: 1) claude-sonnet-4.5  2) claude-opus-4.6  3) gpt-4.1  4) gpt-5.2-codex  5) gemini-2.5-pro  6) Custom"
+            read -rp "  Choose [1-6, default: 1]: " NEW_MODEL_CHOICE
+            case "$NEW_MODEL_CHOICE" in
+                2) NEW_MODEL="claude-opus-4.6" ;;
+                3) NEW_MODEL="gpt-4.1" ;;
+                4) NEW_MODEL="gpt-5.2-codex" ;;
+                5) NEW_MODEL="gemini-2.5-pro" ;;
+                6) read -rp "  Enter model name: " NEW_MODEL ;;
+                *) NEW_MODEL="claude-sonnet-4.5" ;;
             esac
         elif [ "$NEW_PROVIDER" = "opencode" ]; then
             echo "  Model: 1) opencode/claude-sonnet-4-5  2) opencode/claude-opus-4-6  3) opencode/gemini-3-flash  4) anthropic/claude-sonnet-4-5  5) Custom"
@@ -337,6 +386,10 @@ TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 # Use jq to build valid JSON to avoid escaping issues with agent prompts
 if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
+elif [ "$PROVIDER" = "copilot" ]; then
+    MODELS_SECTION='"models": { "provider": "copilot", "copilot": { "model": "'"${MODEL}"'" } }'
+elif [ "$PROVIDER" = "copilot-sdk" ]; then
+    MODELS_SECTION='"models": { "provider": "copilot-sdk", "copilot": { "model": "'"${MODEL}"'" } }'
 elif [ "$PROVIDER" = "opencode" ]; then
     MODELS_SECTION='"models": { "provider": "opencode", "opencode": { "model": "'"${MODEL}"'" } }'
 else

@@ -31,6 +31,7 @@ import {
     pruneAckedResponses, pruneCompletedMessages, closeQueueDb, queueEvents, DbMessage,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
+import { stopCopilotSdkClient } from './lib/copilot-sdk';
 import {
     conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
     withConversationLock, incrementPending, decrementPending,
@@ -162,7 +163,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
         } catch (error) {
             const provider = agent.provider || 'anthropic';
-            const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
+            const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : provider === 'copilot' || provider === 'copilot-sdk' ? 'Copilot' : 'Claude';
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
         }
@@ -392,15 +393,17 @@ setInterval(() => {
 }, 60 * 60 * 1000); // every 1 hr
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
     log('INFO', 'Shutting down queue processor...');
+    await stopCopilotSdkClient();
     closeQueueDb();
     apiServer.close();
     process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
     log('INFO', 'Shutting down queue processor...');
+    await stopCopilotSdkClient();
     closeQueueDb();
     apiServer.close();
     process.exit(0);

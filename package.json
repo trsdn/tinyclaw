@@ -13,6 +13,7 @@
     "visualize": "node dist/visualizer/team-visualizer.js"
   },
   "dependencies": {
+    "@github/copilot-sdk": "^0.1.26",
     "@hono/node-server": "^1.19.9",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",

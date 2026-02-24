@@ -134,10 +134,14 @@ agent_add() {
     echo "  1) Anthropic (Claude)"
     echo "  2) OpenAI (Codex)"
     echo "  3) OpenCode"
-    read -rp "Choose [1-3, default: 1]: " AGENT_PROVIDER_CHOICE
+    echo "  4) GitHub Copilot (CLI)"
+    echo "  5) GitHub Copilot (SDK)"
+    read -rp "Choose [1-5, default: 1]: " AGENT_PROVIDER_CHOICE
     case "$AGENT_PROVIDER_CHOICE" in
         2) AGENT_PROVIDER="openai" ;;
         3) AGENT_PROVIDER="opencode" ;;
+        4) AGENT_PROVIDER="copilot" ;;
+        5) AGENT_PROVIDER="copilot-sdk" ;;
         *) AGENT_PROVIDER="anthropic" ;;
     esac
 
@@ -153,6 +157,27 @@ agent_add() {
             2) AGENT_MODEL="opus" ;;
             3) read -rp "Enter model name: " AGENT_MODEL ;;
             *) AGENT_MODEL="sonnet" ;;
+        esac
+    elif [ "$AGENT_PROVIDER" = "copilot" ] || [ "$AGENT_PROVIDER" = "copilot-sdk" ]; then
+        echo "Model:"
+        echo "  1) claude-sonnet-4.5   (default, recommended)"
+        echo "  2) claude-opus-4.6     (smartest)"
+        echo "  3) gpt-4.1             (OpenAI)"
+        echo "  4) gpt-5.2-codex       (OpenAI Codex)"
+        echo "  5) gemini-2.5-pro      (Google)"
+        echo "  6) gemini-3-flash      (Google, fast)"
+        echo "  7) grok-code-fast-1    (xAI)"
+        echo "  8) Custom (enter model name)"
+        read -rp "Choose [1-8, default: 1]: " AGENT_MODEL_CHOICE
+        case "$AGENT_MODEL_CHOICE" in
+            2) AGENT_MODEL="claude-opus-4.6" ;;
+            3) AGENT_MODEL="gpt-4.1" ;;
+            4) AGENT_MODEL="gpt-5.2-codex" ;;
+            5) AGENT_MODEL="gemini-2.5-pro" ;;
+            6) AGENT_MODEL="gemini-3-flash" ;;
+            7) AGENT_MODEL="grok-code-fast-1" ;;
+            8) read -rp "Enter model name: " AGENT_MODEL ;;
+            *) AGENT_MODEL="claude-sonnet-4.5" ;;
         esac
     elif [ "$AGENT_PROVIDER" = "opencode" ]; then
         echo "Model (provider/model format):"
@@ -402,15 +427,49 @@ agent_provider() {
                 echo "Use 'tinyclaw agent provider ${agent_id} openai --model {gpt-5.3-codex|gpt-5.2}' to also set the model."
             fi
             ;;
+        copilot)
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" \
+                    '.agents[$id].provider = "copilot" | .agents[$id].model = $model' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to GitHub Copilot (CLI) with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" \
+                    '.agents[$id].provider = "copilot"' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to GitHub Copilot (CLI)${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} copilot --model {claude-sonnet-4.5|gpt-4.1|gemini-2.5-pro}' to also set the model."
+            fi
+            ;;
+        copilot-sdk)
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" \
+                    '.agents[$id].provider = "copilot-sdk" | .agents[$id].model = $model' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to GitHub Copilot (SDK) with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" \
+                    '.agents[$id].provider = "copilot-sdk"' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to GitHub Copilot (SDK)${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} copilot-sdk --model {claude-sonnet-4.5|gpt-4.1|gemini-2.5-pro}' to also set the model."
+            fi
+            ;;
         *)
-            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai} [--model MODEL_NAME]"
+            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai|opencode|copilot|copilot-sdk} [--model MODEL_NAME]"
             echo ""
             echo "Examples:"
             echo "  tinyclaw agent provider coder                                    # Show current provider/model"
             echo "  tinyclaw agent provider coder anthropic                           # Switch to Anthropic"
             echo "  tinyclaw agent provider coder openai                              # Switch to OpenAI"
+            echo "  tinyclaw agent provider coder copilot                             # Switch to Copilot (CLI)"
+            echo "  tinyclaw agent provider coder copilot-sdk                         # Switch to Copilot (SDK)"
             echo "  tinyclaw agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
             echo "  tinyclaw agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+            echo "  tinyclaw agent provider coder copilot --model gpt-4.1             # Switch to Copilot GPT-4.1"
+            echo "  tinyclaw agent provider coder copilot-sdk --model gemini-2.5-pro  # Switch to Copilot SDK Gemini"
             exit 1
             ;;
     esac

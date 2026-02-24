@@ -1,7 +1,7 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic', 'openai', or 'opencode'
-    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
+    provider: string;       // 'anthropic', 'openai', 'opencode', 'copilot', or 'copilot-sdk'
+    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex', 'gpt-4.1'
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
@@ -43,7 +43,7 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic', 'openai', 'opencode', 'copilot', or 'copilot-sdk'
         anthropic?: {
             model?: string;
         };
@@ -51,6 +51,9 @@ export interface Settings {
             model?: string;
         };
         opencode?: {
+            model?: string;
+        };
+        copilot?: {
             model?: string;
         };
     };
@@ -114,6 +117,44 @@ export const CLAUDE_MODEL_IDS: Record<string, string> = {
 export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.2': 'gpt-5.2',
     'gpt-5.3-codex': 'gpt-5.3-codex',
+};
+
+// GitHub Copilot CLI model IDs (passed via --model flag).
+export const COPILOT_MODEL_IDS: Record<string, string> = {
+    // OpenAI models
+    'gpt-4.1': 'gpt-4.1',
+    'gpt-5-mini': 'gpt-5-mini',
+    'gpt-5.1': 'gpt-5.1',
+    'gpt-5.1-codex': 'gpt-5.1-codex',
+    'gpt-5.1-codex-mini': 'gpt-5.1-codex-mini',
+    'gpt-5.1-codex-max': 'gpt-5.1-codex-max',
+    'gpt-5.2': 'gpt-5.2',
+    'gpt-5.2-codex': 'gpt-5.2-codex',
+    'gpt-5.3-codex': 'gpt-5.3-codex',
+    // Anthropic models
+    'claude-haiku-4.5': 'claude-haiku-4.5',
+    'claude-sonnet-4.0': 'claude-sonnet-4.0',
+    'claude-sonnet-4.5': 'claude-sonnet-4.5',
+    'claude-sonnet-4.6': 'claude-sonnet-4.6',
+    'claude-opus-4.5': 'claude-opus-4.5',
+    'claude-opus-4.6': 'claude-opus-4.6',
+    // Google models
+    'gemini-2.5-pro': 'gemini-2.5-pro',
+    'gemini-3-flash': 'gemini-3-flash',
+    'gemini-3-pro': 'gemini-3-pro',
+    'gemini-3.1-pro': 'gemini-3.1-pro',
+    // xAI models
+    'grok-code-fast-1': 'grok-code-fast-1',
+    // Fine-tuned models
+    'raptor-mini': 'raptor-mini',
+    'goldeneye': 'goldeneye',
+    // Shorthand aliases
+    'gpt': 'gpt-4.1',
+    'sonnet': 'claude-sonnet-4.5',
+    'opus': 'claude-opus-4.6',
+    'haiku': 'claude-haiku-4.5',
+    'gemini': 'gemini-2.5-pro',
+    'grok': 'grok-code-fast-1',
 };
 
 // OpenCode model IDs in provider/model format (passed via --model / -m flag).
