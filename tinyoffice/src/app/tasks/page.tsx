@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { usePolling } from "@/lib/hooks";
 import {
@@ -48,8 +48,14 @@ export default function TasksPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // Build kanban value: columns → task items
-  const columns = useMemo(() => {
+  const [columns, setColumns] = useState<Record<UniqueIdentifier, Task[]>>({
+    backlog: [],
+    in_progress: [],
+    review: [],
+    done: [],
+  });
+
+  useEffect(() => {
     const cols: Record<UniqueIdentifier, Task[]> = {
       backlog: [],
       in_progress: [],
@@ -62,25 +68,28 @@ export default function TasksPage() {
         if (col) col.push(task);
       }
     }
-    return cols;
+    setColumns(cols);
   }, [tasks]);
 
+  const columnsRef = useRef(columns);
+  useEffect(() => { columnsRef.current = columns; });
+
   const handleValueChange = useCallback(
-    async (newColumns: Record<UniqueIdentifier, Task[]>) => {
-      // Build columns map of status → task IDs for bulk reorder
-      const colMap: Record<string, string[]> = {};
-      for (const [status, items] of Object.entries(newColumns)) {
-        colMap[status] = items.map((t) => t.id);
-      }
-      try {
-        await reorderTasks(colMap);
-        refresh();
-      } catch {
-        // Ignore — will refresh on next poll
-      }
+    (newColumns: Record<UniqueIdentifier, Task[]>) => {
+      setColumns(newColumns as Record<TaskStatus, Task[]>);
     },
-    [refresh]
+    []
   );
+
+  const handleDragEnd = useCallback(async () => {
+    const colMap: Record<string, string[]> = {};
+    for (const [status, items] of Object.entries(columnsRef.current)) {
+      colMap[status] = items.map((t) => t.id);
+    }
+    try {
+      await reorderTasks(colMap);
+    } catch { /* ignore */ }
+  }, []);
 
   const handleCreate = useCallback(async () => {
     if (!form.title.trim()) {
@@ -122,8 +131,7 @@ export default function TasksPage() {
   const handleAssign = useCallback(
     async (task: Task) => {
       if (!task.assignee) return;
-      const prefix = task.assigneeType === "team" ? "@" : "@";
-      const msg = `${prefix}${task.assignee} ${task.title}${task.description ? "\n\n" + task.description : ""}`;
+      const msg = `@${task.assignee} ${task.title}${task.description ? "\n\n" + task.description : ""}`;
       try {
         await sendMessage({ message: msg, sender: "Web", channel: "web" });
         await updateTask(task.id, { status: "in_progress" });
@@ -230,6 +238,7 @@ export default function TasksPage() {
         <Kanban
           value={columns}
           onValueChange={handleValueChange}
+          onDragEnd={handleDragEnd}
           getItemValue={(item: Task) => item.id}
         >
           <KanbanBoard className="h-full">

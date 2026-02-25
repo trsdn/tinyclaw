@@ -25,7 +25,7 @@ type FormData = {
 };
 
 const emptyForm: FormData = {
-  id: "", name: "", provider: "anthropic", model: "sonnet",
+  id: "", name: "", provider: "copilot", model: "claude-sonnet-4.5",
   working_directory: "", system_prompt: "", prompt_file: "",
 };
 
@@ -62,13 +62,21 @@ export default function AgentsPage() {
   const handleSave = useCallback(async () => {
     if (!editing) return;
     const { id, name, provider, model, working_directory, system_prompt, prompt_file } = editing;
-    if (!id.trim() || !name.trim() || !provider.trim() || !model.trim()) {
+    const normalizedId = id.trim().toLowerCase();
+    if (!normalizedId || !name.trim() || !provider.trim() || !model.trim()) {
       setError("ID, name, provider, and model are required");
       return;
     }
-    if (/\s/.test(id)) {
+    if (/\s/.test(id.trim())) {
       setError("ID cannot contain spaces");
       return;
+    }
+    if (isNew && agents) {
+      const existingIds = Object.keys(agents).map(k => k.toLowerCase());
+      if (existingIds.includes(normalizedId)) {
+        setError("Agent with this ID already exists");
+        return;
+      }
     }
     setSaving(true);
     setError("");
@@ -85,7 +93,7 @@ export default function AgentsPage() {
     } finally {
       setSaving(false);
     }
-  }, [editing, refresh]);
+  }, [editing, isNew, agents, refresh]);
 
   const handleDelete = useCallback(async (id: string) => {
     setDeleting(id);
@@ -209,6 +217,8 @@ function AgentEditor({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Provider</label>
             <Select value={form.provider} onChange={(e) => set("provider", e.target.value)}>
+              <option value="copilot">copilot</option>
+              <option value="copilot-sdk">copilot-sdk</option>
               <option value="anthropic">anthropic</option>
               <option value="openai">openai</option>
               <option value="opencode">opencode</option>
@@ -284,9 +294,11 @@ function AgentCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const providerColors: Record<string, string> = {
+    copilot: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    "copilot-sdk": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     anthropic: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     openai: "bg-green-500/10 text-green-600 dark:text-green-400",
-    opencode: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    opencode: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   };
 
   return (

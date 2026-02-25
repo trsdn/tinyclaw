@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR } from './config';
+
+const agentsMdCache = new Map<string, string>();
 
 /**
  * Recursively copy directory
@@ -74,7 +77,7 @@ export function ensureAgentDirectory(agentDir: string): void {
     // Symlink .agent/skills to .claude/skills for agent-level access
     const targetAgentDir = path.join(agentDir, '.agent');
     const targetAgentSkills = path.join(targetAgentDir, 'skills');
-    if (!fs.existsSync(targetAgentSkills)) {
+    if (fs.existsSync(sourceSkills) && !fs.existsSync(targetAgentSkills)) {
         fs.mkdirSync(targetAgentDir, { recursive: true });
         fs.symlinkSync(sourceSkills, targetAgentSkills);
     }
@@ -128,10 +131,12 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
         }
     }
 
+    const contentHash = createHash('md5').update(block).digest('hex');
+    if (agentsMdCache.get(agentDir) === contentHash) return;
+
     const newContent = content.substring(0, startIdx + startMarker.length) + block + content.substring(endIdx);
     fs.writeFileSync(agentsMdPath, newContent);
 
-    // Also write to .claude/CLAUDE.md
     const claudeDir = path.join(agentDir, '.claude');
     if (!fs.existsSync(claudeDir)) {
         fs.mkdirSync(claudeDir, { recursive: true });
@@ -146,8 +151,8 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
     if (cStartIdx !== -1 && cEndIdx !== -1) {
         claudeContent = claudeContent.substring(0, cStartIdx + startMarker.length) + block + claudeContent.substring(cEndIdx);
     } else {
-        // Append markers + block
         claudeContent = claudeContent.trimEnd() + '\n\n' + startMarker + block + endMarker + '\n';
     }
     fs.writeFileSync(claudeMdPath, claudeContent);
+    agentsMdCache.set(agentDir, contentHash);
 }

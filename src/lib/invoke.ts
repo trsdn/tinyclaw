@@ -48,6 +48,8 @@ export async function runCommand(command: string, args: string[], cwd?: string):
  * Invoke a single agent with a message. Contains all Claude/Codex invocation logic.
  * Returns the raw response text.
  */
+const MAX_MESSAGE_LENGTH = 100_000;
+
 export async function invokeAgent(
     agent: AgentConfig,
     agentId: string,
@@ -57,6 +59,10 @@ export async function invokeAgent(
     agents: Record<string, AgentConfig> = {},
     teams: Record<string, TeamConfig> = {}
 ): Promise<string> {
+    if (message.length > MAX_MESSAGE_LENGTH) {
+        throw new Error(`Message too long (${message.length} chars, max ${MAX_MESSAGE_LENGTH})`);
+    }
+
     // Ensure agent directory exists with config files
     const agentDir = path.join(workspacePath, agentId);
     const isNewAgent = !fs.existsSync(agentDir);
@@ -168,7 +174,7 @@ export async function invokeAgent(
             try {
                 const json = JSON.parse(line);
                 if (json.type === 'text' && json.part?.text) {
-                    response = json.part.text;
+                    response += json.part.text;
                 }
             } catch (e) {
                 // Ignore lines that aren't valid JSON

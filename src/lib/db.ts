@@ -125,6 +125,7 @@ export function initQueueDb(): void {
         CREATE INDEX IF NOT EXISTS idx_messages_status_agent_created
             ON messages(status, agent, created_at);
         CREATE INDEX IF NOT EXISTS idx_responses_channel_status ON responses(channel, status);
+        CREATE INDEX IF NOT EXISTS idx_responses_agent ON responses(agent, created_at);
     `);
 
     // Drop legacy indexes/tables
@@ -160,7 +161,7 @@ export function enqueueMessage(data: EnqueueMessageData): number {
         now,
     );
     const rowId = result.lastInsertRowid as number;
-    queueEvents.emit('message:enqueued', { id: rowId, agent: data.agent });
+    queueMicrotask(() => queueEvents.emit('message:enqueued', { id: rowId, agent: data.agent }));
     return rowId;
 }
 
@@ -199,16 +200,18 @@ export function completeMessage(rowId: number): void {
 
 export function failMessage(rowId: number, error: string): void {
     const d = getDb();
-    const msg = d.prepare('SELECT retry_count FROM messages WHERE id = ?').get(rowId) as { retry_count: number } | undefined;
-    if (!msg) return;
+    d.transaction(() => {
+        const msg = d.prepare('SELECT retry_count FROM messages WHERE id = ?').get(rowId) as { retry_count: number } | undefined;
+        if (!msg) return;
 
-    const newCount = msg.retry_count + 1;
-    const newStatus = newCount >= MAX_RETRIES ? 'dead' : 'pending';
+        const newCount = msg.retry_count + 1;
+        const newStatus = newCount >= MAX_RETRIES ? 'dead' : 'pending';
 
-    d.prepare(`
-        UPDATE messages SET status = ?, retry_count = ?, last_error = ?, claimed_by = NULL, updated_at = ?
-        WHERE id = ?
-    `).run(newStatus, newCount, error, Date.now(), rowId);
+        d.prepare(`
+            UPDATE messages SET status = ?, retry_count = ?, last_error = ?, claimed_by = NULL, updated_at = ?
+            WHERE id = ?
+        `).run(newStatus, newCount, error, Date.now(), rowId);
+    })();
 }
 
 // ── Responses (outgoing queue) ───────────────────────────────────────────────
@@ -273,18 +276,17 @@ export function getRecentSentMessages(limit: number): DbMessage[] {
 
 export function getSentMessagesForAgent(agent: string, limit: number): DbMessage[] {
     return getDb().prepare(`
-        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
-        FROM messages WHERE message LIKE ? ORDER BY created_at DESC LIMIT ?
-    `).all(`%@${agent} %`, limit) as DbMessage[];
+        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at, conversation_id
+        FROM messages WHERE agent = ? AND conversation_id IS NULL ORDER BY created_at DESC LIMIT ?
+    `).all(agent, limit) as DbMessage[];
 }
 
 export function getSentMessagesForAgents(agents: string[], limit: number): DbMessage[] {
-    const conditions = agents.map(() => `message LIKE ?`).join(' OR ');
-    const params = agents.map(a => `%@${a} %`);
+    const placeholders = agents.map(() => '?').join(',');
     return getDb().prepare(`
-        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
-        FROM messages WHERE ${conditions} ORDER BY created_at DESC LIMIT ?
-    `).all(...params, limit) as DbMessage[];
+        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at, conversation_id
+        FROM messages WHERE agent IN (${placeholders}) AND conversation_id IS NULL ORDER BY created_at DESC LIMIT ?
+    `).all(...agents, limit) as DbMessage[];
 }
 
 // ── Queue status & management ────────────────────────────────────────────────
@@ -294,19 +296,20 @@ export function getQueueStatus(): {
     responsesPending: number;
 } {
     const d = getDb();
-    const counts = d.prepare(`
-        SELECT status, COUNT(*) as cnt FROM messages GROUP BY status
-    `).all() as { status: string; cnt: number }[];
+    const rows = d.prepare(`
+        SELECT 'msg' as src, status, COUNT(*) as cnt FROM messages GROUP BY status
+        UNION ALL
+        SELECT 'resp' as src, status, COUNT(*) as cnt FROM responses WHERE status = 'pending'
+    `).all() as { src: string; status: string; cnt: number }[];
 
     const result = { pending: 0, processing: 0, completed: 0, dead: 0, responsesPending: 0 };
-    for (const row of counts) {
-        if (row.status in result) (result as any)[row.status] = row.cnt;
+    for (const row of rows) {
+        if (row.src === 'msg' && row.status in result) {
+            (result as any)[row.status] = row.cnt;
+        } else if (row.src === 'resp') {
+            result.responsesPending = row.cnt;
+        }
     }
-
-    const respCount = d.prepare(`
-        SELECT COUNT(*) as cnt FROM responses WHERE status = 'pending'
-    `).get() as { cnt: number };
-    result.responsesPending = respCount.cnt;
 
     return result;
 }
@@ -338,7 +341,12 @@ export function deleteDeadMessage(rowId: number): boolean {
 export function recoverStaleMessages(thresholdMs = 10 * 60 * 1000): number {
     const cutoff = Date.now() - thresholdMs;
     const result = getDb().prepare(`
-        UPDATE messages SET status = 'pending', claimed_by = NULL, updated_at = ?
+        UPDATE messages
+        SET status = CASE WHEN retry_count + 1 >= 5 THEN 'dead' ELSE 'pending' END,
+            retry_count = retry_count + 1,
+            last_error = 'Recovered from stale processing state',
+            claimed_by = NULL,
+            updated_at = ?
         WHERE status = 'processing' AND updated_at < ?
     `).run(Date.now(), cutoff);
     return result.changes;

@@ -12,6 +12,7 @@ import {
   Settings, SlidersHorizontal, ClipboardList, Building2,
 } from "lucide-react";
 
+
 export function Sidebar() {
   const pathname = usePathname();
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);

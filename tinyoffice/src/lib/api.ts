@@ -47,9 +47,14 @@ export interface Settings {
     anthropic?: { model?: string };
     openai?: { model?: string };
     opencode?: { model?: string };
+    copilot?: { model?: string };
   };
   agents?: Record<string, AgentConfig>;
   teams?: Record<string, TeamConfig>;
+  api?: {
+    api_key?: string;
+    bind_host?: string;
+  };
   monitoring?: { heartbeat_interval?: number };
 }
 
@@ -208,29 +213,56 @@ export async function reorderTasks(columns: Record<string, string[]>): Promise<{
 
 export function subscribeToEvents(
   onEvent: (event: EventData) => void,
-  onError?: (err: Event) => void
+  onError?: (err: Event) => void,
+  onOpen?: () => void
 ): () => void {
   const sseUrl = API_KEY
     ? `${API_BASE}/api/events/stream?api_key=${encodeURIComponent(API_KEY)}`
     : `${API_BASE}/api/events/stream`;
-  const es = new EventSource(sseUrl);
 
-  const handler = (e: MessageEvent) => {
-    try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
-  };
-
-  // Listen to all known event types
   const eventTypes = [
     "connected",
     "message_received", "agent_routed", "chain_step_start", "chain_step_done",
     "chain_handoff", "team_chain_start", "team_chain_end", "response_ready",
     "processor_start", "message_enqueued",
   ];
-  for (const type of eventTypes) {
-    es.addEventListener(type, handler);
+
+  let es: EventSource | null = null;
+  let backoff = 1000;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+
+  const handler = (e: MessageEvent) => {
+    try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
+  };
+
+  function connect() {
+    if (disposed) return;
+    es = new EventSource(sseUrl);
+
+    for (const type of eventTypes) {
+      es.addEventListener(type, handler);
+    }
+
+    es.onopen = () => { backoff = 1000; if (onOpen) onOpen(); };
+
+    es.onerror = (err: Event) => {
+      if (disposed) return;
+      if (es && es.readyState === EventSource.CLOSED) {
+        if (onError) onError(err);
+        es.close();
+        es = null;
+        reconnectTimer = setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, 30000);
+      }
+    };
   }
 
-  if (onError) es.onerror = onError;
+  connect();
 
-  return () => es.close();
+  return () => {
+    disposed = true;
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    if (es) es.close();
+  };
 }

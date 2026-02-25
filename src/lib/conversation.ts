@@ -22,30 +22,28 @@ export async function withConversationLock<T>(
     convId: string,
     fn: () => Promise<T>
 ): Promise<T> {
-    const currentLock = conversationLocks.get(convId) || Promise.resolve();
+    const currentLock = conversationLocks.get(convId) ?? Promise.resolve();
 
-    let resolveLock: () => void;
-    const lockPromise = new Promise<void>((resolve) => {
-        resolveLock = resolve;
-    });
+    let releaseOuter!: () => void;
+    const outerGate = new Promise<void>((resolve) => { releaseOuter = resolve; });
 
-    const newLock = currentLock.then(async () => {
+    const execution = currentLock.then(async (): Promise<T> => {
         try {
             return await fn();
         } finally {
-            resolveLock();
+            releaseOuter();
         }
     });
 
-    conversationLocks.set(convId, lockPromise);
+    conversationLocks.set(convId, outerGate);
 
-    newLock.finally(() => {
-        if (conversationLocks.get(convId) === lockPromise) {
+    execution.finally(() => {
+        if (conversationLocks.get(convId) === outerGate) {
             conversationLocks.delete(convId);
         }
     });
 
-    return newLock;
+    return execution;
 }
 
 /**
@@ -100,6 +98,9 @@ export function enqueueInternalMessage(
  * Complete a conversation: aggregate responses, write to outgoing queue, save chat history.
  */
 export function completeConversation(conv: Conversation): void {
+    if (conv.completed) return;
+    conv.completed = true;
+
     const settings = getSettings();
     const agents = getAgents(settings);
 

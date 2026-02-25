@@ -69,6 +69,8 @@ export function ChatView({
   const [connected, setConnected] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
   const seenRef = useRef(new Set<string>());
+  const filterAgentsRef = useRef(filterAgents);
+  useEffect(() => { filterAgentsRef.current = filterAgents; });
 
   // Track which response timestamps we already displayed
   const seenResponsesRef = useRef(new Set<string>());
@@ -100,6 +102,10 @@ export function ChatView({
           const sentKey = `sent:${msg.messageId}`;
           if (seenResponsesRef.current.has(sentKey)) continue;
           seenResponsesRef.current.add(sentKey);
+          if (seenResponsesRef.current.size > 5000) {
+            const entries = [...seenResponsesRef.current];
+            seenResponsesRef.current = new Set(entries.slice(entries.length - 4000));
+          }
           // Strip [channel/sender]: prefix and @agent prefix if present
           const cleanMsg = msg.message
             .replace(/^\[[^\]]*\]:\s*/, "")
@@ -122,6 +128,10 @@ export function ChatView({
           const key = `resp:${resp.messageId}:${resp.timestamp}`;
           if (seenResponsesRef.current.has(key)) continue;
           seenResponsesRef.current.add(key);
+          if (seenResponsesRef.current.size > 5000) {
+            const entries = [...seenResponsesRef.current];
+            seenResponsesRef.current = new Set(entries.slice(entries.length - 4000));
+          }
 
           newItems.push({
             id: key,
@@ -165,9 +175,9 @@ export function ChatView({
         if (seenRef.current.has(fp)) return;
         seenRef.current.add(fp);
         // Keep the set from growing unbounded
-        if (seenRef.current.size > 500) {
+        if (seenRef.current.size > 5000) {
           const entries = [...seenRef.current];
-          seenRef.current = new Set(entries.slice(entries.length - 300));
+          seenRef.current = new Set(entries.slice(entries.length - 4000));
         }
 
         const eventType = String((event as Record<string, unknown>).type || "");
@@ -194,9 +204,9 @@ export function ChatView({
         if (eventType === "response_ready") return;
 
         // Filter non-status events by agent when filterAgents is set
-        if (filterAgents) {
+        if (filterAgentsRef.current) {
           const evtAgent = String((event as Record<string, unknown>).agentId || "");
-          if (evtAgent && !filterAgents.includes(evtAgent)) return;
+          if (evtAgent && !filterAgentsRef.current.includes(evtAgent)) return;
         }
 
         setFeed((prev) => [

@@ -107,11 +107,6 @@ function parseMessage(msg: string): MsgSegment[] {
   return segments;
 }
 
-// Lerp between two values
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
 export default function OfficePage() {
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
@@ -123,7 +118,11 @@ export default function OfficePage() {
   const agentEntries = agents ? Object.entries(agents) : [];
   const teamEntries = teams ? Object.entries(teams) : [];
 
-  // Assign agents to desk positions and sprite images
+  const agentIds = useMemo(
+    () => (agents ? Object.keys(agents) : []).join(","),
+    [agents]
+  );
+
   const agentPositions = useMemo(
     () =>
       agentEntries.map(([id, agent], i) => ({
@@ -132,8 +131,7 @@ export default function OfficePage() {
         deskPos: DESK_POSITIONS[i % DESK_POSITIONS.length],
         sprite: `/assets/office/${SPRITE_KEYS[i % SPRITE_KEYS.length]}.png`,
       })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentEntries.map(([id]) => id).join(",")]
+    [agentIds, agentEntries]
   );
 
   // Build desk position lookup

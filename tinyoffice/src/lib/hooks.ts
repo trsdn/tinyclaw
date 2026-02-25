@@ -12,33 +12,27 @@ export function usePolling<T>(
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const mountedRef = useRef(true);
+  const fetcherRef = useRef(fetcher);
+  useEffect(() => { fetcherRef.current = fetcher; });
 
   const refresh = useCallback(async () => {
     try {
-      const result = await fetcher();
-      if (mountedRef.current) {
-        setData(result);
-        setError(null);
-      }
+      const result = await fetcherRef.current();
+      setData(result);
+      setError(null);
     } catch (err) {
-      if (mountedRef.current) {
-        setError((err as Error).message);
-      }
+      setError((err as Error).message);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   useEffect(() => {
-    mountedRef.current = true;
     refresh();
     const id = setInterval(refresh, intervalMs);
-    return () => {
-      mountedRef.current = false;
-      clearInterval(id);
-    };
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, intervalMs]);
 
   return { data, error, loading, refresh };
@@ -53,7 +47,6 @@ export function useSSE(maxEvents = 100): {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    setConnected(true);
     const unsubscribe = subscribeToEvents(
       (event) => {
         setEvents((prev) => {
@@ -61,14 +54,23 @@ export function useSSE(maxEvents = 100): {
           return next.length > maxEvents ? next.slice(0, maxEvents) : next;
         });
       },
-      () => {
-        setConnected(false);
-      }
+      () => { setConnected(false); },
+      () => { setConnected(true); }
     );
     return unsubscribe;
   }, [maxEvents]);
 
   return { events, connected };
+}
+
+/** Returns a counter that increments every 30 seconds, useful as a dependency to force re-render for relative times. */
+export function useTimeTick(intervalMs = 30_000): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return tick;
 }
 
 /** Format a timestamp to relative time. */

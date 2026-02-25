@@ -98,6 +98,7 @@ export interface Conversation {
     startTime: number;
     // Track how many mentions each agent sent out (for inbox draining)
     outgoingMentions: Map<string, number>;
+    completed?: boolean;
 }
 
 export interface ResponseData {

@@ -109,6 +109,12 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             agentId = Object.keys(agents)[0];
         }
 
+        if (!agents[agentId]) {
+            log('ERROR', `No agents configured — cannot process message ${messageId}`);
+            failMessage(dbMsg.id, 'No agents configured');
+            return;
+        }
+
         const agent = agents[agentId];
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         if (!isInternal) {
@@ -242,28 +248,28 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             response, agentId, conv.teamContext.teamId, teams, agents
         );
 
-        if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
-            // Enqueue internal messages for each mention
-            incrementPending(conv, teammateMentions.length);
-            conv.outgoingMentions.set(agentId, teammateMentions.length);
-            for (const mention of teammateMentions) {
-                log('INFO', `@${agentId} → @${mention.teammateId}`);
-                emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
-
-                const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
-                enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
-                    channel: messageData.channel,
-                    sender: messageData.sender,
-                    senderId: messageData.senderId,
-                    messageId: messageData.messageId,
-                });
-            }
-        } else if (teammateMentions.length > 0) {
-            log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
-        }
-
-        // This branch is done - use atomic decrement with locking
+        // This branch is done - use atomic lock for increment + enqueue + decrement
         await withConversationLock(conv.id, async () => {
+            if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
+                // Enqueue internal messages for each mention
+                incrementPending(conv, teammateMentions.length);
+                conv.outgoingMentions.set(agentId, teammateMentions.length);
+                for (const mention of teammateMentions) {
+                    log('INFO', `@${agentId} → @${mention.teammateId}`);
+                    emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+
+                    const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
+                    enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+                        channel: messageData.channel,
+                        sender: messageData.sender,
+                        senderId: messageData.senderId,
+                        messageId: messageData.messageId,
+                    });
+                }
+            } else if (teammateMentions.length > 0) {
+                log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
+            }
+
             const shouldComplete = decrementPending(conv);
 
             if (shouldComplete) {
@@ -294,24 +300,18 @@ async function processQueue(): Promise<void> {
         if (pendingAgents.length === 0) return;
 
         for (const agentId of pendingAgents) {
-            // Claim next message for this agent
             const dbMsg = claimNextMessage(agentId);
             if (!dbMsg) continue;
 
-            // Get or create promise chain for this agent
-            const currentChain = agentProcessingChains.get(agentId) || Promise.resolve();
-
-            // Chain this message to the agent's promise
-            const newChain = currentChain
+            const previousChain = agentProcessingChains.get(agentId) ?? Promise.resolve();
+            const newChain = previousChain
                 .then(() => processMessage(dbMsg))
                 .catch(error => {
                     log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
                 });
 
-            // Update the chain
             agentProcessingChains.set(agentId, newChain);
 
-            // Clean up completed chains to avoid memory leaks
             newChain.finally(() => {
                 if (agentProcessingChains.get(agentId) === newChain) {
                     agentProcessingChains.delete(agentId);
@@ -374,13 +374,16 @@ setInterval(() => {
     if (count > 0) log('INFO', `Recovered ${count} stale message(s)`);
 }, 5 * 60 * 1000); // every 5 min
 
-setInterval(() => {
-    // Clean up old conversations (TTL: 30 min)
+setInterval(async () => {
     const cutoff = Date.now() - 30 * 60 * 1000;
     for (const [id, conv] of conversations.entries()) {
         if (conv.startTime < cutoff) {
-            log('WARN', `Conversation ${id} timed out after 30 min — cleaning up`);
-            conversations.delete(id);
+            log('WARN', `Conversation ${id} timed out after 30 min`);
+            await withConversationLock(id, async () => {
+                if (conversations.has(id)) {
+                    completeConversation(conv);
+                }
+            });
         }
     }
 }, 30 * 60 * 1000); // every 30 min
@@ -396,18 +399,24 @@ setInterval(() => {
 }, 60 * 60 * 1000); // every 1 hr
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
+async function gracefulShutdown(): Promise<void> {
     log('INFO', 'Shutting down queue processor...');
     await stopCopilotSdkClient();
-    closeQueueDb();
-    apiServer.close();
-    process.exit(0);
-});
 
-process.on('SIGTERM', async () => {
-    log('INFO', 'Shutting down queue processor...');
-    await stopCopilotSdkClient();
+    // Drain in-flight agent processing chains (30s timeout)
+    const chains = Array.from(agentProcessingChains.values());
+    if (chains.length > 0) {
+        log('INFO', `Waiting for ${chains.length} agent chain(s) to drain...`);
+        await Promise.race([
+            Promise.all(chains),
+            new Promise<void>(resolve => setTimeout(resolve, 30_000)),
+        ]);
+    }
+
     closeQueueDb();
     apiServer.close();
     process.exit(0);
-});
+}
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);

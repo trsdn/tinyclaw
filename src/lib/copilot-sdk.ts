@@ -27,18 +27,21 @@ async function getSDK(): Promise<any> {
     return sdkModule;
 }
 
+let clientInitPromise: Promise<any> | null = null;
+
 async function getClient(): Promise<any> {
-    if (!sharedClient) {
-        const sdk = await getSDK();
-        sharedClient = new sdk.CopilotClient({
-            autoStart: true,
-            autoRestart: true,
-            logLevel: 'warn',
-        });
-        await sharedClient.start();
-        log('INFO', 'Copilot SDK client started');
+    if (sharedClient) return sharedClient;
+    if (!clientInitPromise) {
+        clientInitPromise = (async () => {
+            const sdk = await getSDK();
+            const client = new sdk.CopilotClient({ autoStart: true, autoRestart: true, logLevel: 'warn' });
+            await client.start();
+            sharedClient = client;
+            log('INFO', 'Copilot SDK client started');
+            return client;
+        })();
     }
-    return sharedClient;
+    return clientInitPromise;
 }
 
 /**
@@ -119,6 +122,7 @@ export async function stopCopilotSdkClient(): Promise<void> {
             // Best effort
         }
         sharedClient = null;
+        clientInitPromise = null;
         log('INFO', 'Copilot SDK client stopped');
     }
 }

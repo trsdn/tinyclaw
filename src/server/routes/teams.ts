@@ -4,6 +4,8 @@ import { getSettings, getTeams } from '../../lib/config';
 import { log } from '../../lib/logging';
 import { mutateSettings } from './settings';
 
+const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
 const app = new Hono();
 
 // GET /api/teams
@@ -14,6 +16,9 @@ app.get('/api/teams', (c) => {
 // PUT /api/teams/:id
 app.put('/api/teams/:id', async (c) => {
     const teamId = c.req.param('id');
+    if (!SAFE_ID_REGEX.test(teamId)) {
+        return c.json({ error: 'Invalid team ID: only alphanumeric, underscore, hyphen allowed (max 64 chars)' }, 400);
+    }
     const body = await c.req.json() as Partial<TeamConfig>;
     if (!body.name || !body.agents || !body.leader_agent) {
         return c.json({ error: 'name, agents, and leader_agent are required' }, 400);
@@ -33,6 +38,9 @@ app.put('/api/teams/:id', async (c) => {
 // DELETE /api/teams/:id
 app.delete('/api/teams/:id', (c) => {
     const teamId = c.req.param('id');
+    if (!SAFE_ID_REGEX.test(teamId)) {
+        return c.json({ error: 'Invalid team ID: only alphanumeric, underscore, hyphen allowed (max 64 chars)' }, 400);
+    }
     const settings = getSettings();
     if (!settings.teams?.[teamId]) {
         return c.json({ error: `team '${teamId}' not found` }, 404);

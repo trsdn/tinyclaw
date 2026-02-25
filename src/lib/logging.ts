@@ -5,7 +5,7 @@ export function log(level: string, message: string): void {
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] [${level}] ${message}\n`;
     console.log(logMessage.trim());
-    fs.appendFileSync(LOG_FILE, logMessage);
+    fs.appendFile(LOG_FILE, logMessage, () => {});
 }
 
 /**

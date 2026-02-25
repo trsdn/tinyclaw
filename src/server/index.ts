@@ -12,21 +12,20 @@
  */
 
 import crypto from 'crypto';
-import fs from 'fs';
 import http from 'http';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import { Conversation } from '../lib/types';
-import { getSettings, SETTINGS_FILE } from '../lib/config';
+import { getSettings } from '../lib/config';
 import { log } from '../lib/logging';
 import { addSSEClient, removeSSEClient } from './sse';
 
 import messagesRoutes from './routes/messages';
 import agentsRoutes from './routes/agents';
 import teamsRoutes from './routes/teams';
-import settingsRoutes from './routes/settings';
+import settingsRoutes, { mutateSettings } from './routes/settings';
 import { createQueueRoutes } from './routes/queue';
 import tasksRoutes from './routes/tasks';
 import logsRoutes from './routes/logs';
@@ -56,12 +55,10 @@ function getOrCreateApiKey(): string | null {
     // Auto-generate and persist
     const key = `tc_${crypto.randomBytes(24).toString('hex')}`;
     try {
-        const raw = fs.existsSync(SETTINGS_FILE)
-            ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))
-            : {};
-        raw.api = raw.api || {};
-        raw.api.api_key = key;
-        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(raw, null, 2) + '\n');
+        mutateSettings((s) => {
+            if (!s.api) s.api = {};
+            s.api.api_key = key;
+        });
     } catch {
         // Non-fatal — key works for this session even if persist fails
     }

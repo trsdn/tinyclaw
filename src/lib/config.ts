@@ -14,7 +14,20 @@ export const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 export const CHATS_DIR = path.join(TINYCLAW_HOME, 'chats');
 export const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
 
+let cachedSettings: Settings | null = null;
+let cachedAt = 0;
+const SETTINGS_TTL = 5000; // 5 seconds
+
+export function invalidateSettingsCache(): void {
+    cachedSettings = null;
+    cachedAt = 0;
+}
+
 export function getSettings(): Settings {
+    const now = Date.now();
+    if (cachedSettings && (now - cachedAt) < SETTINGS_TTL) {
+        return cachedSettings;
+    }
     try {
         const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
         let settings: Settings;
@@ -57,6 +70,8 @@ export function getSettings(): Settings {
             }
         }
 
+        cachedSettings = settings;
+        cachedAt = now;
         return settings;
     } catch {
         return {};

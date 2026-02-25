@@ -7,6 +7,14 @@ import { log } from '../../lib/logging';
 
 const TASKS_FILE = path.join(TINYCLAW_HOME, 'tasks.json');
 
+let taskLock: Promise<void> = Promise.resolve();
+
+function withTaskLock<T>(fn: () => T): Promise<T> {
+    const result = taskLock.then(fn);
+    taskLock = result.then(() => {}, () => {});
+    return result;
+}
+
 function readTasks(): Task[] {
     try {
         if (!fs.existsSync(TASKS_FILE)) return [];
@@ -33,21 +41,24 @@ app.post('/api/tasks', async (c) => {
     if (!body.title) {
         return c.json({ error: 'title is required' }, 400);
     }
-    const tasks = readTasks();
-    const task: Task = {
-        id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        title: body.title,
-        description: body.description || '',
-        status: body.status || 'backlog',
-        assignee: body.assignee || '',
-        assigneeType: body.assigneeType || '',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    tasks.push(task);
-    writeTasks(tasks);
-    log('INFO', `[API] Task created: ${task.title}`);
-    return c.json({ ok: true, task });
+    const result = await withTaskLock(() => {
+        const tasks = readTasks();
+        const task: Task = {
+            id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            title: body.title!,
+            description: body.description || '',
+            status: body.status || 'backlog',
+            assignee: body.assignee || '',
+            assigneeType: body.assigneeType || '',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        tasks.push(task);
+        writeTasks(tasks);
+        log('INFO', `[API] Task created: ${task.title}`);
+        return task;
+    });
+    return c.json({ ok: true, task: result });
 });
 
 // PUT /api/tasks/reorder — must be before /api/tasks/:id
@@ -56,17 +67,19 @@ app.put('/api/tasks/reorder', async (c) => {
     if (!body.columns) {
         return c.json({ error: 'columns map is required' }, 400);
     }
-    const tasks = readTasks();
-    for (const [status, taskIds] of Object.entries(body.columns)) {
-        for (const taskId of taskIds) {
-            const task = tasks.find(t => t.id === taskId);
-            if (task) {
-                task.status = status as TaskStatus;
-                task.updatedAt = Date.now();
+    await withTaskLock(() => {
+        const tasks = readTasks();
+        for (const [status, taskIds] of Object.entries(body.columns)) {
+            for (const taskId of taskIds) {
+                const task = tasks.find(t => t.id === taskId);
+                if (task) {
+                    task.status = status as TaskStatus;
+                    task.updatedAt = Date.now();
+                }
             }
         }
-    }
-    writeTasks(tasks);
+        writeTasks(tasks);
+    });
     return c.json({ ok: true });
 });
 
@@ -74,24 +87,32 @@ app.put('/api/tasks/reorder', async (c) => {
 app.put('/api/tasks/:id', async (c) => {
     const taskId = c.req.param('id');
     const body = await c.req.json() as Partial<Task>;
-    const tasks = readTasks();
-    const idx = tasks.findIndex(t => t.id === taskId);
-    if (idx === -1) return c.json({ error: 'task not found' }, 404);
-    tasks[idx] = { ...tasks[idx], ...body, id: taskId, updatedAt: Date.now() };
-    writeTasks(tasks);
-    log('INFO', `[API] Task updated: ${taskId}`);
-    return c.json({ ok: true, task: tasks[idx] });
+    const result = await withTaskLock(() => {
+        const tasks = readTasks();
+        const idx = tasks.findIndex(t => t.id === taskId);
+        if (idx === -1) return null;
+        tasks[idx] = { ...tasks[idx], ...body, id: taskId, updatedAt: Date.now() };
+        writeTasks(tasks);
+        log('INFO', `[API] Task updated: ${taskId}`);
+        return tasks[idx];
+    });
+    if (!result) return c.json({ error: 'task not found' }, 404);
+    return c.json({ ok: true, task: result });
 });
 
 // DELETE /api/tasks/:id
-app.delete('/api/tasks/:id', (c) => {
+app.delete('/api/tasks/:id', async (c) => {
     const taskId = c.req.param('id');
-    const tasks = readTasks();
-    const idx = tasks.findIndex(t => t.id === taskId);
-    if (idx === -1) return c.json({ error: 'task not found' }, 404);
-    tasks.splice(idx, 1);
-    writeTasks(tasks);
-    log('INFO', `[API] Task deleted: ${taskId}`);
+    const found = await withTaskLock(() => {
+        const tasks = readTasks();
+        const idx = tasks.findIndex(t => t.id === taskId);
+        if (idx === -1) return false;
+        tasks.splice(idx, 1);
+        writeTasks(tasks);
+        log('INFO', `[API] Task deleted: ${taskId}`);
+        return true;
+    });
+    if (!found) return c.json({ error: 'task not found' }, 404);
     return c.json({ ok: true });
 });
 

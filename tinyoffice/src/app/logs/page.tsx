@@ -78,7 +78,7 @@ export default function LogsPage() {
               {logs && logs.lines.length > 0 ? (
                 <pre className="text-xs font-mono leading-relaxed text-muted-foreground whitespace-pre-wrap">
                   {logs.lines.map((line, i) => (
-                    <LogLine key={i} line={line} />
+                    <LogLine key={`${i}-${line.slice(0, 40)}`} line={line} />
                   ))}
                 </pre>
               ) : (

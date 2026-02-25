@@ -25,7 +25,8 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
 
     // GET /api/responses?limit=20&agent=sm  or  &agents=sm,coder,reviewer
     app.get('/api/responses', (c) => {
-        const limit = parseInt(c.req.query('limit') || '20', 10);
+        const limitRaw = parseInt(c.req.query('limit') || '20', 10);
+        const limit = isNaN(limitRaw) || limitRaw < 1 ? 20 : Math.min(limitRaw, 500);
         const agent = c.req.query('agent');
         const agentsParam = c.req.query('agents');
 
@@ -54,7 +55,8 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
     // GET /api/messages/sent?agent=po  or  &agents=sm,coder
     // Returns recent sent messages from the queue (for chat history)
     app.get('/api/messages/sent', (c) => {
-        const limit = parseInt(c.req.query('limit') || '20', 10);
+        const limitRaw = parseInt(c.req.query('limit') || '20', 10);
+        const limit = isNaN(limitRaw) || limitRaw < 1 ? 20 : Math.min(limitRaw, 500);
         const agent = c.req.query('agent');
         const agentsParam = c.req.query('agents');
 

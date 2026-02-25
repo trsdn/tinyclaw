@@ -19,14 +19,17 @@ export default function ConsolePage() {
   ];
   if (agents) {
     for (const [id, agent] of Object.entries(agents)) {
-      targetOptions.push({ value: `@${id}`, label: agent.name, group: "agent" });
+      targetOptions.push({ value: `agent:${id}`, label: agent.name, group: "Agents" });
     }
   }
   if (teams) {
     for (const [id, team] of Object.entries(teams)) {
-      targetOptions.push({ value: `@${id}`, label: team.name, group: "team" });
+      targetOptions.push({ value: `team:${id}`, label: team.name, group: "Teams" });
     }
   }
+
+  const msgPrefix = target.startsWith("agent:") ? `@${target.slice(6)}` :
+                    target.startsWith("team:") ? `@${target.slice(5)}` : "";
 
   const selectedLabel = target
     ? targetOptions.find((o) => o.value === target)?.label || target
@@ -44,20 +47,20 @@ export default function ConsolePage() {
         >
           {targetOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>
-              {opt.group === "team" ? "Team: " : opt.group === "agent" ? "Agent: " : ""}
+              {opt.group === "Teams" ? "Team: " : opt.group === "Agents" ? "Agent: " : ""}
               {opt.label}
             </option>
           ))}
         </Select>
-        {target && (
-          <Badge variant="outline" className="text-[10px] font-mono">{target}</Badge>
+        {msgPrefix && (
+          <Badge variant="outline" className="text-[10px] font-mono">{msgPrefix}</Badge>
         )}
       </div>
 
       {/* Chat */}
       <div className="flex-1 min-h-0">
         <ChatView
-          target={target}
+          target={msgPrefix}
           targetLabel={selectedLabel}
         />
       </div>

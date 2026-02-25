@@ -6,6 +6,8 @@ import { SCRIPT_DIR, TINYCLAW_HOME, getSettings, getAgents } from '../../lib/con
 import { log } from '../../lib/logging';
 import { mutateSettings } from './settings';
 
+const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
 const app = new Hono();
 
 // ── Agent workspace provisioning ─────────────────────────────────────────────
@@ -86,6 +88,9 @@ app.get('/api/agents', (c) => {
 // PUT /api/agents/:id
 app.put('/api/agents/:id', async (c) => {
     const agentId = c.req.param('id');
+    if (!SAFE_ID_REGEX.test(agentId)) {
+        return c.json({ error: 'Invalid agent ID: only alphanumeric, underscore, hyphen allowed (max 64 chars)' }, 400);
+    }
     const body = await c.req.json() as Partial<AgentConfig>;
     if (!body.name || !body.provider || !body.model) {
         return c.json({ error: 'name, provider, and model are required' }, 400);
@@ -132,6 +137,9 @@ app.put('/api/agents/:id', async (c) => {
 // DELETE /api/agents/:id
 app.delete('/api/agents/:id', (c) => {
     const agentId = c.req.param('id');
+    if (!SAFE_ID_REGEX.test(agentId)) {
+        return c.json({ error: 'Invalid agent ID: only alphanumeric, underscore, hyphen allowed (max 64 chars)' }, 400);
+    }
     const settings = getSettings();
     if (!settings.agents?.[agentId]) {
         return c.json({ error: `agent '${agentId}' not found` }, 404);

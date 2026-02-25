@@ -19,7 +19,13 @@ export function removeSSEClient(res: http.ServerResponse): void {
     sseClients.delete(res);
 }
 
-// Wire emitEvent → SSE so every queue-processor event is also pushed to the web.
 onEvent((type, data) => {
-    broadcastSSE(type, { type, timestamp: Date.now(), ...data });
+    const payload: Record<string, unknown> = { type, timestamp: Date.now(), ...data };
+    if ((type === 'response_ready' || type === 'chain_step_done') && typeof payload.responseText === 'string') {
+        const text = payload.responseText as string;
+        if (text.length > 200) {
+            payload.responseText = text.substring(0, 200) + '...';
+        }
+    }
+    broadcastSSE(type, payload);
 });

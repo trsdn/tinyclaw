@@ -67,6 +67,7 @@ export function extractTeammateMentions(
 
     // Strip all [@teammate: ...] tags from the full response to get shared context
     const sharedContext = response.replace(tagRegex, '').trim();
+    tagRegex.lastIndex = 0;
 
     let tagMatch: RegExpExecArray | null;
     while ((tagMatch = tagRegex.exec(response)) !== null) {
@@ -104,34 +105,43 @@ export function parseAgentRouting(
     teams: Record<string, TeamConfig> = {}
 ): { agentId: string; message: string; isTeam?: boolean } {
     // Match @agent_id, optionally preceded by [channel/sender]: prefix from messages API
-    const match = rawMessage.match(/^(\[[^\]]*\]:\s*)?@(\S+)\s+([\s\S]*)$/);
+    const match = rawMessage.match(/^(\[[^\]]*\]:\s*)?@(\S+)(?:\s+([\s\S]*))?$/);
     if (match) {
         const prefix = match[1] || '';
         const candidateId = match[2].toLowerCase();
-        const message = prefix + match[3];
+        const message = (prefix + (match[3] || '')).trim();
 
-        // Check agent IDs
+        let resolvedAgentId: string | null = null;
+        let isTeam = false;
+
         if (agents[candidateId]) {
-            return { agentId: candidateId, message };
-        }
-
-        // Check team IDs — resolve to leader agent
-        if (teams[candidateId]) {
-            return { agentId: teams[candidateId].leader_agent, message, isTeam: true };
-        }
-
-        // Match by agent name (case-insensitive)
-        for (const [id, config] of Object.entries(agents)) {
-            if (config.name.toLowerCase() === candidateId) {
-                return { agentId: id, message };
+            resolvedAgentId = candidateId;
+        } else if (teams[candidateId]) {
+            resolvedAgentId = teams[candidateId].leader_agent;
+            isTeam = true;
+        } else {
+            for (const [id, config] of Object.entries(agents)) {
+                if (config.name.toLowerCase() === candidateId) {
+                    resolvedAgentId = id;
+                    break;
+                }
+            }
+            if (!resolvedAgentId) {
+                for (const [, config] of Object.entries(teams)) {
+                    if (config.name.toLowerCase() === candidateId) {
+                        resolvedAgentId = config.leader_agent;
+                        isTeam = true;
+                        break;
+                    }
+                }
             }
         }
 
-        // Match by team name (case-insensitive)
-        for (const [, config] of Object.entries(teams)) {
-            if (config.name.toLowerCase() === candidateId) {
-                return { agentId: config.leader_agent, message, isTeam: true };
+        if (resolvedAgentId) {
+            if (!message && !prefix) {
+                return { agentId: resolvedAgentId, message: rawMessage, ...(isTeam ? { isTeam: true } : {}) };
             }
+            return { agentId: resolvedAgentId, message, ...(isTeam ? { isTeam: true } : {}) };
         }
     }
     return { agentId: 'default', message: rawMessage };
