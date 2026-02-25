@@ -4,8 +4,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { timeAgo } from "@/lib/hooks";
 import {
   sendMessage,
+  getResponses,
   subscribeToEvents,
   type EventData,
+  type ResponseData,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,10 +65,51 @@ export function ChatView({
   const feedEndRef = useRef<HTMLDivElement>(null);
   const seenRef = useRef(new Set<string>());
 
+  // Track which response timestamps we already displayed
+  const seenResponsesRef = useRef(new Set<string>());
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [feed.length]);
+
+  // Poll for responses every 2 seconds
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const responses = await getResponses(20);
+        if (!active) return;
+        setConnected(true);
+        for (const resp of responses) {
+          const key = `${resp.messageId}:${resp.timestamp}`;
+          if (seenResponsesRef.current.has(key)) continue;
+          seenResponsesRef.current.add(key);
+          setFeed((prev) => [
+            ...prev,
+            {
+              id: key,
+              type: "event" as const,
+              timestamp: resp.timestamp,
+              data: {
+                type: "response_ready",
+                responseText: resp.message,
+                agentId: resp.agent || "",
+                channel: resp.channel,
+                sender: resp.sender,
+                messageId: resp.messageId,
+              },
+            },
+          ]);
+        }
+      } catch {
+        if (active) setConnected(false);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
 
   useEffect(() => {
     const unsub = subscribeToEvents(
@@ -102,6 +145,9 @@ export function ChatView({
           );
           return;
         }
+
+        // Skip response_ready from SSE — handled by polling
+        if (eventType === "response_ready") return;
 
         setFeed((prev) => [
           ...prev,
