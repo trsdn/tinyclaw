@@ -122,14 +122,26 @@ export function startApiServer(
     app.route('/', chatsRoutes);
 
     // SSE endpoint — needs raw Node.js response for streaming
+    // CORS headers added manually since we bypass Hono's response pipeline
+    const allowedOrigins = new Set([
+        `http://localhost:${API_PORT}`,
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        `http://127.0.0.1:${API_PORT}`,
+    ]);
     app.get('/api/events/stream', (c) => {
         const nodeRes = (c.env as { outgoing: http.ServerResponse }).outgoing;
-        nodeRes.writeHead(200, {
+        const origin = c.req.header('origin') || '';
+        const headers: Record<string, string> = {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-        });
-        nodeRes.write(`event: connected\ndata: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
+        };
+        if (allowedOrigins.has(origin)) {
+            headers['Access-Control-Allow-Origin'] = origin;
+        }
+        nodeRes.writeHead(200, headers);
+        nodeRes.write(`event: connected\ndata: ${JSON.stringify({ type: 'connected', timestamp: Date.now() })}\n\n`);
         addSSEClient(nodeRes);
         nodeRes.on('close', () => removeSSEClient(nodeRes));
         return RESPONSE_ALREADY_SENT;

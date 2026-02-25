@@ -51,6 +51,7 @@ export default function TeamChatPage({
         <ChatView
           target={`@${id}`}
           targetLabel={team?.name || `@${id}`}
+          filterAgents={team?.agents}
         />
       </div>
     </div>

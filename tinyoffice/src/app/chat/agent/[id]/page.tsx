@@ -50,6 +50,7 @@ export default function AgentChatPage({
         <ChatView
           target={`@${id}`}
           targetLabel={agent?.name || `@${id}`}
+          filterAgents={[id]}
         />
       </div>
     </div>

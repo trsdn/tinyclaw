@@ -251,6 +251,42 @@ export function getRecentResponses(limit: number): DbResponse[] {
     `).all(limit) as DbResponse[];
 }
 
+export function getResponsesForAgent(agent: string, limit: number): DbResponse[] {
+    return getDb().prepare(`
+        SELECT * FROM responses WHERE agent = ? ORDER BY created_at DESC LIMIT ?
+    `).all(agent, limit) as DbResponse[];
+}
+
+export function getResponsesForAgents(agents: string[], limit: number): DbResponse[] {
+    const placeholders = agents.map(() => '?').join(',');
+    return getDb().prepare(`
+        SELECT * FROM responses WHERE agent IN (${placeholders}) ORDER BY created_at DESC LIMIT ?
+    `).all(...agents, limit) as DbResponse[];
+}
+
+export function getRecentSentMessages(limit: number): DbMessage[] {
+    return getDb().prepare(`
+        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
+        FROM messages ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as DbMessage[];
+}
+
+export function getSentMessagesForAgent(agent: string, limit: number): DbMessage[] {
+    return getDb().prepare(`
+        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
+        FROM messages WHERE message LIKE ? ORDER BY created_at DESC LIMIT ?
+    `).all(`%@${agent} %`, limit) as DbMessage[];
+}
+
+export function getSentMessagesForAgents(agents: string[], limit: number): DbMessage[] {
+    const conditions = agents.map(() => `message LIKE ?`).join(' OR ');
+    const params = agents.map(a => `%@${a} %`);
+    return getDb().prepare(`
+        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
+        FROM messages WHERE ${conditions} ORDER BY created_at DESC LIMIT ?
+    `).all(...params, limit) as DbMessage[];
+}
+
 // ── Queue status & management ────────────────────────────────────────────────
 
 export function getQueueStatus(): {

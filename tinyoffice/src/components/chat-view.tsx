@@ -5,6 +5,7 @@ import { timeAgo } from "@/lib/hooks";
 import {
   sendMessage,
   getResponses,
+  getSentMessages,
   subscribeToEvents,
   type EventData,
   type ResponseData,
@@ -32,6 +33,7 @@ interface FeedItem {
 
 // Chain mechanic events go to status bar, not the main feed
 const STATUS_BAR_EVENTS = new Set([
+  "connected",
   "chain_step_start",
   "chain_handoff",
   "team_chain_start",
@@ -51,11 +53,14 @@ interface StatusBarEvent {
 export function ChatView({
   target,
   targetLabel,
+  filterAgents,
 }: {
   /** The @prefix target, e.g. "@coder" or "@backend-team". Empty = no target. */
   target: string;
   /** Display label, e.g. "Coder" or "Backend Team" */
   targetLabel: string;
+  /** Agent IDs whose responses to show. Undefined = show all. */
+  filterAgents?: string[];
 }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -68,39 +73,77 @@ export function ChatView({
   // Track which response timestamps we already displayed
   const seenResponsesRef = useRef(new Set<string>());
 
+  // Stable dependency key for filterAgents (avoid new array ref each render)
+  const filterKey = filterAgents?.join(",") ?? "";
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [feed.length]);
 
-  // Poll for responses every 2 seconds
+  // Poll for sent messages AND responses every 2 seconds (filtered by agent)
+  // Sent messages come from the queue DB — they persist across navigation
   useEffect(() => {
     let active = true;
     const poll = async () => {
       try {
-        const responses = await getResponses(20);
+        const [sentMessages, responses] = await Promise.all([
+          getSentMessages(20, filterAgents),
+          getResponses(20, filterAgents),
+        ]);
         if (!active) return;
         setConnected(true);
+        const newItems: FeedItem[] = [];
+
+        // Add sent messages from queue DB
+        for (const msg of sentMessages) {
+          const sentKey = `sent:${msg.messageId}`;
+          if (seenResponsesRef.current.has(sentKey)) continue;
+          seenResponsesRef.current.add(sentKey);
+          // Strip [channel/sender]: prefix and @agent prefix if present
+          const cleanMsg = msg.message
+            .replace(/^\[[^\]]*\]:\s*/, "")
+            .replace(/^@\S+\s+/, "");
+          newItems.push({
+            id: sentKey,
+            type: "sent" as const,
+            timestamp: msg.timestamp,
+            data: {
+              message: cleanMsg,
+              messageId: msg.messageId,
+              target,
+              status: msg.status,
+            },
+          });
+        }
+
+        // Add responses
         for (const resp of responses) {
-          const key = `${resp.messageId}:${resp.timestamp}`;
+          const key = `resp:${resp.messageId}:${resp.timestamp}`;
           if (seenResponsesRef.current.has(key)) continue;
           seenResponsesRef.current.add(key);
-          setFeed((prev) => [
-            ...prev,
-            {
-              id: key,
-              type: "event" as const,
-              timestamp: resp.timestamp,
-              data: {
-                type: "response_ready",
-                responseText: resp.message,
-                agentId: resp.agent || "",
-                channel: resp.channel,
-                sender: resp.sender,
-                messageId: resp.messageId,
-              },
+
+          newItems.push({
+            id: key,
+            type: "event" as const,
+            timestamp: resp.timestamp,
+            data: {
+              type: "response_ready",
+              responseText: resp.message,
+              agentId: resp.agent || "",
+              channel: resp.channel,
+              sender: resp.sender,
+              messageId: resp.messageId,
             },
-          ]);
+          });
+        }
+
+        if (newItems.length > 0) {
+          setFeed((prev) => {
+            const combined = [...prev, ...newItems];
+            combined.sort((a, b) => a.timestamp - b.timestamp);
+            return combined;
+          });
         }
       } catch {
         if (active) setConnected(false);
@@ -109,7 +152,8 @@ export function ChatView({
     poll();
     const id = setInterval(poll, 2000);
     return () => { active = false; clearInterval(id); };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey]);
 
   useEffect(() => {
     const unsub = subscribeToEvents(
@@ -149,6 +193,12 @@ export function ChatView({
         // Skip response_ready from SSE — handled by polling
         if (eventType === "response_ready") return;
 
+        // Filter non-status events by agent when filterAgents is set
+        if (filterAgents) {
+          const evtAgent = String((event as Record<string, unknown>).agentId || "");
+          if (evtAgent && !filterAgents.includes(evtAgent)) return;
+        }
+
         setFeed((prev) => [
           ...prev,
           {
@@ -177,13 +227,16 @@ export function ChatView({
         channel: "web",
       });
 
+      // Instant local feedback — mark as seen so polling doesn't duplicate
+      const sentKey = `sent:${result.messageId}`;
+      seenResponsesRef.current.add(sentKey);
       setFeed((prev) => [
         ...prev,
         {
-          id: result.messageId,
+          id: sentKey,
           type: "sent" as const,
           timestamp: Date.now(),
-          data: { message: finalMessage, messageId: result.messageId, target },
+          data: { message: message, messageId: result.messageId, target },
         },
       ]);
 

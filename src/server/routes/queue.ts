@@ -4,6 +4,8 @@ import { log } from '../../lib/logging';
 import {
     getQueueStatus, getRecentResponses, getResponsesForChannel, ackResponse,
     enqueueResponse, getDeadMessages, retryDeadMessage, deleteDeadMessage,
+    getResponsesForAgent, getResponsesForAgents,
+    getRecentSentMessages, getSentMessagesForAgent, getSentMessagesForAgents,
 } from '../../lib/db';
 
 export function createQueueRoutes(conversations: Map<string, Conversation>) {
@@ -21,10 +23,21 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
         });
     });
 
-    // GET /api/responses
+    // GET /api/responses?limit=20&agent=sm  or  &agents=sm,coder,reviewer
     app.get('/api/responses', (c) => {
         const limit = parseInt(c.req.query('limit') || '20', 10);
-        const responses = getRecentResponses(limit);
+        const agent = c.req.query('agent');
+        const agentsParam = c.req.query('agents');
+
+        let responses;
+        if (agentsParam) {
+            responses = getResponsesForAgents(agentsParam.split(',').filter(Boolean), limit);
+        } else if (agent) {
+            responses = getResponsesForAgent(agent, limit);
+        } else {
+            responses = getRecentResponses(limit);
+        }
+
         return c.json(responses.map(r => ({
             channel: r.channel,
             sender: r.sender,
@@ -35,6 +48,32 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
             messageId: r.message_id,
             agent: r.agent,
             files: r.files ? JSON.parse(r.files) : undefined,
+        })));
+    });
+
+    // GET /api/messages/sent?agent=po  or  &agents=sm,coder
+    // Returns recent sent messages from the queue (for chat history)
+    app.get('/api/messages/sent', (c) => {
+        const limit = parseInt(c.req.query('limit') || '20', 10);
+        const agent = c.req.query('agent');
+        const agentsParam = c.req.query('agents');
+
+        let messages;
+        if (agentsParam) {
+            messages = getSentMessagesForAgents(agentsParam.split(',').filter(Boolean), limit);
+        } else if (agent) {
+            messages = getSentMessagesForAgent(agent, limit);
+        } else {
+            messages = getRecentSentMessages(limit);
+        }
+
+        return c.json(messages.map(m => ({
+            messageId: m.message_id,
+            channel: m.channel,
+            sender: m.sender,
+            message: m.message,
+            status: m.status,
+            timestamp: m.created_at,
         })));
     });
 

@@ -99,8 +99,33 @@ export async function getQueueStatus(): Promise<QueueStatus> {
   return apiFetch("/api/queue/status");
 }
 
-export async function getResponses(limit = 20): Promise<ResponseData[]> {
-  return apiFetch(`/api/responses?limit=${limit}`);
+export async function getResponses(limit = 20, filterAgents?: string[]): Promise<ResponseData[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (filterAgents && filterAgents.length === 1) {
+    params.set('agent', filterAgents[0]);
+  } else if (filterAgents && filterAgents.length > 1) {
+    params.set('agents', filterAgents.join(','));
+  }
+  return apiFetch(`/api/responses?${params}`);
+}
+
+export interface SentMessageData {
+  messageId: string;
+  channel: string;
+  sender: string;
+  message: string;
+  status: string;
+  timestamp: number;
+}
+
+export async function getSentMessages(limit = 20, filterAgents?: string[]): Promise<SentMessageData[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (filterAgents && filterAgents.length === 1) {
+    params.set('agent', filterAgents[0]);
+  } else if (filterAgents && filterAgents.length > 1) {
+    params.set('agents', filterAgents.join(','));
+  }
+  return apiFetch(`/api/messages/sent?${params}`);
 }
 
 export async function getLogs(limit = 100): Promise<{ lines: string[] }> {

@@ -23,13 +23,16 @@ app.post('/api/message', async (c) => {
     // Prepend channel and sender context only when explicitly provided
     const fullMessage = (channel && sender) ? `[${channel}/${sender}]: ${message}` : message;
 
+    // Parse @agent from message if not explicitly provided
+    const resolvedAgent = agent || message.match(/^@(\S+)/)?.[1] || undefined;
+
     enqueueMessage({
         channel: resolvedChannel,
         sender: resolvedSender,
         senderId: senderId || undefined,
         message: fullMessage,
         messageId,
-        agent: agent || undefined,
+        agent: resolvedAgent,
         files: files && files.length > 0 ? files : undefined,
     });
 

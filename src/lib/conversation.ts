@@ -181,6 +181,7 @@ export function completeConversation(conv: Conversation): void {
         message: responseMessage,
         originalMessage: conv.originalMessage,
         messageId: conv.messageId,
+        agent: conv.responses[0]?.agentId || conv.teamContext.team.leader_agent,
         files: allFiles.length > 0 ? allFiles : undefined,
     });
 

@@ -349,8 +349,8 @@ function logAgentConfig(): void {
 // Initialize SQLite queue
 initQueueDb();
 
-// Recover stale messages from previous crash
-const recovered = recoverStaleMessages();
+// On startup, reset ALL processing messages — no copilot processes survive a restart
+const recovered = recoverStaleMessages(0);
 if (recovered > 0) {
     log('INFO', `Recovered ${recovered} stale message(s) from previous session`);
 }
@@ -364,6 +364,9 @@ emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), te
 
 // Event-driven: all messages come through the API server (same process)
 queueEvents.on('message:enqueued', () => processQueue());
+
+// Process any leftover pending messages from before this restart
+processQueue();
 
 // Periodic maintenance
 setInterval(() => {
