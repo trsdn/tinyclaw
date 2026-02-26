@@ -71,7 +71,6 @@ export interface EnqueueResponseData {
 
 // ── Singleton ────────────────────────────────────────────────────────────────
 
-const QUEUE_DB_PATH = path.join(TINYCLAW_HOME, 'tinyclaw.db');
 const MAX_RETRIES = 5;
 
 let db: Database.Database | null = null;
@@ -81,10 +80,11 @@ export const queueEvents = new EventEmitter();
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
-export function initQueueDb(): void {
+export function initQueueDb(customDbPath?: string): void {
     if (db) return;
 
-    db = new Database(QUEUE_DB_PATH);
+    const dbPath = customDbPath || path.join(TINYCLAW_HOME, 'tinyclaw.db');
+    db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('busy_timeout = 5000');
 
