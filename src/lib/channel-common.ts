@@ -27,6 +27,23 @@ export const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 export const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 export const API_BASE = `http://localhost:${API_PORT}`;
 
+let _settingsCache: any = null;
+let _settingsCacheAt = 0;
+const _SETTINGS_TTL = 5000;
+
+function loadSettings(): any {
+    const now = Date.now();
+    if (_settingsCache && (now - _settingsCacheAt) < _SETTINGS_TTL) return _settingsCache;
+    try {
+        _settingsCache = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        _settingsCacheAt = now;
+    } catch {
+        _settingsCache = {};
+        _settingsCacheAt = now;
+    }
+    return _settingsCache;
+}
+
 /**
  * Build the channel-specific log file path.
  */
@@ -57,7 +74,7 @@ export function createLogger(logFile: string): (level: string, message: string) 
         const timestamp = new Date().toISOString();
         const logMessage = `[${timestamp}] [${level}] ${message}\n`;
         console.log(logMessage.trim());
-        fs.appendFileSync(logFile, logMessage);
+        fs.appendFile(logFile, logMessage, () => {});
     };
 }
 
@@ -91,8 +108,7 @@ export function getTeamListText(
     codeFmt: (s: string) => string = s => s,
 ): string {
     try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
+        const settings = loadSettings();
         const teams = settings.teams;
         if (!teams || Object.keys(teams).length === 0) {
             return `No teams configured.\n\nCreate a team with: ${codeFmt('tinyclaw team add')}`;
@@ -120,8 +136,7 @@ export function getAgentListText(
     codeFmt: (s: string) => string = s => s,
 ): string {
     try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
+        const settings = loadSettings();
         const agents = settings.agents;
         if (!agents || Object.keys(agents).length === 0) {
             return `No agents configured. Using default single-agent mode.\n\nConfigure agents in ${codeFmt('.tinyclaw/settings.json')} or run: ${codeFmt('tinyclaw agent add')}`;
@@ -155,8 +170,7 @@ export interface ResetResult {
  */
 export function processResetCommand(agentArgString: string): ResetResult {
     const agentArgs = agentArgString.split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
-    const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-    const settings = JSON.parse(settingsData);
+    const settings = loadSettings();
     const agents = settings.agents || {};
     const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
     const results: string[] = [];

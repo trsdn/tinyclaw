@@ -20,7 +20,9 @@ export function handleLongResponse(
     // Save full response as a .md file
     const filename = `response_${Date.now()}.md`;
     const filePath = path.join(FILES_DIR, filename);
-    fs.writeFileSync(filePath, response);
+    fs.writeFile(filePath, response, (err) => {
+        if (err) log('ERROR', `Failed to save long response: ${err.message}`);
+    });
     log('INFO', `Long response (${response.length} chars) saved to ${filename}`);
 
     // Truncate to preview

@@ -14,18 +14,18 @@ export async function runCommand(command: string, args: string[], cwd?: string):
             stdio: ['ignore', 'pipe', 'pipe'],
         });
 
-        let stdout = '';
-        let stderr = '';
+        const stdoutChunks: string[] = [];
+        const stderrChunks: string[] = [];
 
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
 
         child.stdout.on('data', (chunk: string) => {
-            stdout += chunk;
+            stdoutChunks.push(chunk);
         });
 
         child.stderr.on('data', (chunk: string) => {
-            stderr += chunk;
+            stderrChunks.push(chunk);
         });
 
         child.on('error', (error) => {
@@ -34,11 +34,11 @@ export async function runCommand(command: string, args: string[], cwd?: string):
 
         child.on('close', (code) => {
             if (code === 0) {
-                resolve(stdout);
+                resolve(stdoutChunks.join(''));
                 return;
             }
 
-            const errorMessage = stderr.trim() || `Command exited with code ${code}`;
+            const errorMessage = stderrChunks.join('').trim() || `Command exited with code ${code}`;
             reject(new Error(errorMessage));
         });
     });

@@ -75,6 +75,7 @@ const QUEUE_DB_PATH = path.join(TINYCLAW_HOME, 'tinyclaw.db');
 const MAX_RETRIES = 5;
 
 let db: Database.Database | null = null;
+let stmts: ReturnType<typeof prepareStatements> | null = null;
 
 export const queueEvents = new EventEmitter();
 
@@ -132,6 +133,8 @@ export function initQueueDb(): void {
     db.exec('DROP INDEX IF EXISTS idx_messages_status');
     db.exec('DROP INDEX IF EXISTS idx_messages_agent');
     db.exec('DROP TABLE IF EXISTS events');
+
+    stmts = prepareStatements(db);
 }
 
 function getDb(): Database.Database {
@@ -139,15 +142,100 @@ function getDb(): Database.Database {
     return db;
 }
 
+function prepareStatements(d: Database.Database) {
+    return {
+        enqueueMessage: d.prepare(`
+            INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        `),
+        claimSelect: d.prepare(`
+            SELECT * FROM messages
+            WHERE status = 'pending' AND (agent = ? OR (agent IS NULL AND ? = 'default'))
+            ORDER BY created_at ASC
+            LIMIT 1
+        `),
+        claimUpdate: d.prepare(`
+            UPDATE messages SET status = 'processing', claimed_by = ?, updated_at = ?
+            WHERE id = ?
+        `),
+        completeMessage: d.prepare(`
+            UPDATE messages SET status = 'completed', updated_at = ? WHERE id = ?
+        `),
+        failSelect: d.prepare('SELECT retry_count FROM messages WHERE id = ?'),
+        failUpdate: d.prepare(`
+            UPDATE messages SET status = ?, retry_count = ?, last_error = ?, claimed_by = NULL, updated_at = ?
+            WHERE id = ?
+        `),
+        enqueueResponse: d.prepare(`
+            INSERT INTO responses (message_id, channel, sender, sender_id, message, original_message, agent, files, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        `),
+        getResponsesForChannel: d.prepare(`
+            SELECT * FROM responses WHERE channel = ? AND status = 'pending' ORDER BY created_at ASC
+        `),
+        ackResponse: d.prepare(`
+            UPDATE responses SET status = 'acked', acked_at = ? WHERE id = ?
+        `),
+        getRecentResponses: d.prepare(`
+            SELECT * FROM responses ORDER BY created_at DESC LIMIT ?
+        `),
+        getResponsesForAgent: d.prepare(`
+            SELECT * FROM responses WHERE agent = ? ORDER BY created_at DESC LIMIT ?
+        `),
+        getRecentSentMessages: d.prepare(`
+            SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
+            FROM messages ORDER BY created_at DESC LIMIT ?
+        `),
+        getSentMessagesForAgent: d.prepare(`
+            SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at, conversation_id
+            FROM messages WHERE agent = ? AND conversation_id IS NULL ORDER BY created_at DESC LIMIT ?
+        `),
+        getQueueStatus: d.prepare(`
+            SELECT 'msg' as src, status, COUNT(*) as cnt FROM messages GROUP BY status
+            UNION ALL
+            SELECT 'resp' as src, status, COUNT(*) as cnt FROM responses WHERE status = 'pending'
+        `),
+        getDeadMessages: d.prepare(`
+            SELECT * FROM messages WHERE status = 'dead' ORDER BY updated_at DESC
+        `),
+        retryDeadMessage: d.prepare(`
+            UPDATE messages SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = ?
+            WHERE id = ? AND status = 'dead'
+        `),
+        deleteDeadMessage: d.prepare(`
+            DELETE FROM messages WHERE id = ? AND status = 'dead'
+        `),
+        recoverStaleMessages: d.prepare(`
+            UPDATE messages
+            SET status = CASE WHEN retry_count + 1 >= 5 THEN 'dead' ELSE 'pending' END,
+                retry_count = retry_count + 1,
+                last_error = 'Recovered from stale processing state',
+                claimed_by = NULL,
+                updated_at = ?
+            WHERE status = 'processing' AND updated_at < ?
+        `),
+        pruneAckedResponses: d.prepare(`
+            DELETE FROM responses WHERE status = 'acked' AND acked_at < ?
+        `),
+        pruneCompletedMessages: d.prepare(
+            `DELETE FROM messages WHERE status = 'completed' AND updated_at < ?`
+        ),
+        getPendingAgents: d.prepare(`
+            SELECT DISTINCT COALESCE(agent, 'default') as agent FROM messages WHERE status = 'pending'
+        `),
+    };
+}
+
+function getStmts() {
+    if (!stmts) throw new Error('Queue DB not initialized — call initQueueDb() first');
+    return stmts;
+}
+
 // ── Messages (incoming queue) ────────────────────────────────────────────────
 
 export function enqueueMessage(data: EnqueueMessageData): number {
-    const d = getDb();
     const now = Date.now();
-    const result = d.prepare(`
-        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(
+    const result = getStmts().enqueueMessage.run(
         data.messageId,
         data.channel,
         data.sender,
@@ -171,58 +259,37 @@ export function enqueueMessage(data: EnqueueMessageData): number {
  */
 export function claimNextMessage(agentId: string): DbMessage | null {
     const d = getDb();
+    const s = getStmts();
     const claim = d.transaction(() => {
-        const row = d.prepare(`
-            SELECT * FROM messages
-            WHERE status = 'pending' AND (agent = ? OR (agent IS NULL AND ? = 'default'))
-            ORDER BY created_at ASC
-            LIMIT 1
-        `).get(agentId, agentId) as DbMessage | undefined;
-
+        const row = s.claimSelect.get(agentId, agentId) as DbMessage | undefined;
         if (!row) return null;
-
-        d.prepare(`
-            UPDATE messages SET status = 'processing', claimed_by = ?, updated_at = ?
-            WHERE id = ?
-        `).run(agentId, Date.now(), row.id);
-
+        s.claimUpdate.run(agentId, Date.now(), row.id);
         return { ...row, status: 'processing' as const, claimed_by: agentId };
     });
-
     return claim.immediate();
 }
 
 export function completeMessage(rowId: number): void {
-    getDb().prepare(`
-        UPDATE messages SET status = 'completed', updated_at = ? WHERE id = ?
-    `).run(Date.now(), rowId);
+    getStmts().completeMessage.run(Date.now(), rowId);
 }
 
 export function failMessage(rowId: number, error: string): void {
     const d = getDb();
+    const s = getStmts();
     d.transaction(() => {
-        const msg = d.prepare('SELECT retry_count FROM messages WHERE id = ?').get(rowId) as { retry_count: number } | undefined;
+        const msg = s.failSelect.get(rowId) as { retry_count: number } | undefined;
         if (!msg) return;
-
         const newCount = msg.retry_count + 1;
         const newStatus = newCount >= MAX_RETRIES ? 'dead' : 'pending';
-
-        d.prepare(`
-            UPDATE messages SET status = ?, retry_count = ?, last_error = ?, claimed_by = NULL, updated_at = ?
-            WHERE id = ?
-        `).run(newStatus, newCount, error, Date.now(), rowId);
+        s.failUpdate.run(newStatus, newCount, error, Date.now(), rowId);
     })();
 }
 
 // ── Responses (outgoing queue) ───────────────────────────────────────────────
 
 export function enqueueResponse(data: EnqueueResponseData): number {
-    const d = getDb();
     const now = Date.now();
-    const result = d.prepare(`
-        INSERT INTO responses (message_id, channel, sender, sender_id, message, original_message, agent, files, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-    `).run(
+    const result = getStmts().enqueueResponse.run(
         data.messageId,
         data.channel,
         data.sender,
@@ -237,27 +304,19 @@ export function enqueueResponse(data: EnqueueResponseData): number {
 }
 
 export function getResponsesForChannel(channel: string): DbResponse[] {
-    return getDb().prepare(`
-        SELECT * FROM responses WHERE channel = ? AND status = 'pending' ORDER BY created_at ASC
-    `).all(channel) as DbResponse[];
+    return getStmts().getResponsesForChannel.all(channel) as DbResponse[];
 }
 
 export function ackResponse(responseId: number): void {
-    getDb().prepare(`
-        UPDATE responses SET status = 'acked', acked_at = ? WHERE id = ?
-    `).run(Date.now(), responseId);
+    getStmts().ackResponse.run(Date.now(), responseId);
 }
 
 export function getRecentResponses(limit: number): DbResponse[] {
-    return getDb().prepare(`
-        SELECT * FROM responses ORDER BY created_at DESC LIMIT ?
-    `).all(limit) as DbResponse[];
+    return getStmts().getRecentResponses.all(limit) as DbResponse[];
 }
 
 export function getResponsesForAgent(agent: string, limit: number): DbResponse[] {
-    return getDb().prepare(`
-        SELECT * FROM responses WHERE agent = ? ORDER BY created_at DESC LIMIT ?
-    `).all(agent, limit) as DbResponse[];
+    return getStmts().getResponsesForAgent.all(agent, limit) as DbResponse[];
 }
 
 export function getResponsesForAgents(agents: string[], limit: number): DbResponse[] {
@@ -268,17 +327,11 @@ export function getResponsesForAgents(agents: string[], limit: number): DbRespon
 }
 
 export function getRecentSentMessages(limit: number): DbMessage[] {
-    return getDb().prepare(`
-        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at
-        FROM messages ORDER BY created_at DESC LIMIT ?
-    `).all(limit) as DbMessage[];
+    return getStmts().getRecentSentMessages.all(limit) as DbMessage[];
 }
 
 export function getSentMessagesForAgent(agent: string, limit: number): DbMessage[] {
-    return getDb().prepare(`
-        SELECT id, message_id, channel, sender, sender_id, message, agent, status, created_at, conversation_id
-        FROM messages WHERE agent = ? AND conversation_id IS NULL ORDER BY created_at DESC LIMIT ?
-    `).all(agent, limit) as DbMessage[];
+    return getStmts().getSentMessagesForAgent.all(agent, limit) as DbMessage[];
 }
 
 export function getSentMessagesForAgents(agents: string[], limit: number): DbMessage[] {
@@ -295,12 +348,7 @@ export function getQueueStatus(): {
     pending: number; processing: number; completed: number; dead: number;
     responsesPending: number;
 } {
-    const d = getDb();
-    const rows = d.prepare(`
-        SELECT 'msg' as src, status, COUNT(*) as cnt FROM messages GROUP BY status
-        UNION ALL
-        SELECT 'resp' as src, status, COUNT(*) as cnt FROM responses WHERE status = 'pending'
-    `).all() as { src: string; status: string; cnt: number }[];
+    const rows = getStmts().getQueueStatus.all() as { src: string; status: string; cnt: number }[];
 
     const result = { pending: 0, processing: 0, completed: 0, dead: 0, responsesPending: 0 };
     for (const row of rows) {
@@ -315,23 +363,16 @@ export function getQueueStatus(): {
 }
 
 export function getDeadMessages(): DbMessage[] {
-    return getDb().prepare(`
-        SELECT * FROM messages WHERE status = 'dead' ORDER BY updated_at DESC
-    `).all() as DbMessage[];
+    return getStmts().getDeadMessages.all() as DbMessage[];
 }
 
 export function retryDeadMessage(rowId: number): boolean {
-    const result = getDb().prepare(`
-        UPDATE messages SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = ?
-        WHERE id = ? AND status = 'dead'
-    `).run(Date.now(), rowId);
+    const result = getStmts().retryDeadMessage.run(Date.now(), rowId);
     return result.changes > 0;
 }
 
 export function deleteDeadMessage(rowId: number): boolean {
-    const result = getDb().prepare(`
-        DELETE FROM messages WHERE id = ? AND status = 'dead'
-    `).run(rowId);
+    const result = getStmts().deleteDeadMessage.run(rowId);
     return result.changes > 0;
 }
 
@@ -340,15 +381,7 @@ export function deleteDeadMessage(rowId: number): boolean {
  */
 export function recoverStaleMessages(thresholdMs = 10 * 60 * 1000): number {
     const cutoff = Date.now() - thresholdMs;
-    const result = getDb().prepare(`
-        UPDATE messages
-        SET status = CASE WHEN retry_count + 1 >= 5 THEN 'dead' ELSE 'pending' END,
-            retry_count = retry_count + 1,
-            last_error = 'Recovered from stale processing state',
-            claimed_by = NULL,
-            updated_at = ?
-        WHERE status = 'processing' AND updated_at < ?
-    `).run(Date.now(), cutoff);
+    const result = getStmts().recoverStaleMessages.run(Date.now(), cutoff);
     return result.changes;
 }
 
@@ -357,37 +390,26 @@ export function recoverStaleMessages(thresholdMs = 10 * 60 * 1000): number {
  */
 export function pruneAckedResponses(olderThanMs = 24 * 60 * 60 * 1000): number {
     const cutoff = Date.now() - olderThanMs;
-    const result = getDb().prepare(`
-        DELETE FROM responses WHERE status = 'acked' AND acked_at < ?
-    `).run(cutoff);
-    return result.changes;
+    return getStmts().pruneAckedResponses.run(cutoff).changes;
 }
 
-/**
- * Clean up completed messages older than the given threshold (default 24h).
- * Dead messages are kept for manual review/retry.
- */
 export function pruneCompletedMessages(olderThanMs = 24 * 60 * 60 * 1000): number {
     const cutoff = Date.now() - olderThanMs;
-    const result = getDb().prepare(
-        `DELETE FROM messages WHERE status = 'completed' AND updated_at < ?`
-    ).run(cutoff);
-    return result.changes;
+    return getStmts().pruneCompletedMessages.run(cutoff).changes;
 }
 
 /**
  * Get all distinct agent values from pending messages (for processQueue iteration).
  */
 export function getPendingAgents(): string[] {
-    const rows = getDb().prepare(`
-        SELECT DISTINCT COALESCE(agent, 'default') as agent FROM messages WHERE status = 'pending'
-    `).all() as { agent: string }[];
+    const rows = getStmts().getPendingAgents.all() as { agent: string }[];
     return rows.map(r => r.agent);
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 export function closeQueueDb(): void {
+    stmts = null;
     if (db) {
         db.close();
         db = null;

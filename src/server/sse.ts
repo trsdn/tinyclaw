@@ -20,6 +20,7 @@ export function removeSSEClient(res: http.ServerResponse): void {
 }
 
 onEvent((type, data) => {
+    if (sseClients.size === 0) return;
     const payload: Record<string, unknown> = { type, timestamp: Date.now(), ...data };
     if ((type === 'response_ready' || type === 'chain_step_done') && typeof payload.responseText === 'string') {
         const text = payload.responseText as string;

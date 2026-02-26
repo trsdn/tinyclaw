@@ -15,6 +15,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { MessageData, Conversation, TeamConfig } from './lib/types';
 import {
@@ -79,7 +80,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         const teams = getTeams(settings);
 
         // Get workspace path from settings
-        const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+        const workspacePath = settings?.workspace?.path || path.join(os.homedir(), 'tinyclaw-workspace');
 
         // Route message to agent (or team)
         let agentId: string;

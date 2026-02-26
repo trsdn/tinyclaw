@@ -152,7 +152,10 @@ export function completeConversation(conv: Conversation): void {
         }
         const now = new Date();
         const dateTime = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
-        fs.writeFileSync(path.join(teamChatsDir, `${dateTime}.md`), chatLines.join('\n'));
+        const chatContent = chatLines.join('\n');
+        fs.writeFile(path.join(teamChatsDir, `${dateTime}.md`), chatContent, (err) => {
+            if (err) log('ERROR', `Failed to write chat history: ${err.message}`);
+        });
         log('INFO', `Chat history saved`);
     } catch (e) {
         log('ERROR', `Failed to save chat history: ${(e as Error).message}`);
