@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import { usePolling, useSSE, timeAgo } from "@/lib/hooks";
 import { getLogs, type EventData } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -113,7 +113,7 @@ export default function LogsPage() {
   );
 }
 
-function LogLine({ line }: { line: string }) {
+const LogLine = memo(function LogLine({ line }: { line: string }) {
   let levelClass = "text-muted-foreground";
   if (line.includes("[ERROR]")) levelClass = "text-destructive";
   else if (line.includes("[WARN]")) levelClass = "text-yellow-500";
@@ -124,9 +124,9 @@ function LogLine({ line }: { line: string }) {
       {line}
     </div>
   );
-}
+});
 
-function EventEntry({ event }: { event: EventData }) {
+const EventEntry = memo(function EventEntry({ event }: { event: EventData }) {
   const typeColors: Record<string, string> = {
     message_received: "bg-blue-500",
     agent_routed: "bg-primary",
@@ -166,4 +166,4 @@ function EventEntry({ event }: { event: EventData }) {
       </span>
     </div>
   );
-}
+});

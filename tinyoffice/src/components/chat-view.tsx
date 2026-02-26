@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { timeAgo } from "@/lib/hooks";
 import {
   sendMessage,
@@ -68,6 +68,7 @@ export function ChatView({
   const [statusEvents, setStatusEvents] = useState<StatusBarEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
+  const feedContainerRef = useRef<HTMLDivElement>(null);
   const seenRef = useRef(new Set<string>());
   const filterAgentsRef = useRef(filterAgents);
   useEffect(() => { filterAgentsRef.current = filterAgents; });
@@ -78,13 +79,24 @@ export function ChatView({
   // Stable dependency key for filterAgents (avoid new array ref each render)
   const filterKey = filterAgents?.join(",") ?? "";
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track whether user is scrolled to the bottom
+  const isAtBottomRef = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const el = feedContainerRef.current;
+    if (!el) return;
+    // Consider "at bottom" if within 80px of the end
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  // Auto-scroll only when user is already at the bottom
   useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isAtBottomRef.current) {
+      feedEndRef.current?.scrollIntoView({ behavior: "instant" });
+    }
   }, [feed.length]);
 
-  // Poll for sent messages AND responses every 2 seconds (filtered by agent)
-  // Sent messages come from the queue DB — they persist across navigation
+  // Poll for sent messages AND responses (filtered by agent)
   useEffect(() => {
     let active = true;
     const poll = async () => {
@@ -102,10 +114,6 @@ export function ChatView({
           const sentKey = `sent:${msg.messageId}`;
           if (seenResponsesRef.current.has(sentKey)) continue;
           seenResponsesRef.current.add(sentKey);
-          if (seenResponsesRef.current.size > 5000) {
-            const entries = [...seenResponsesRef.current];
-            seenResponsesRef.current = new Set(entries.slice(entries.length - 4000));
-          }
           // Strip [channel/sender]: prefix and @agent prefix if present
           const cleanMsg = msg.message
             .replace(/^\[[^\]]*\]:\s*/, "")
@@ -128,10 +136,6 @@ export function ChatView({
           const key = `resp:${resp.messageId}:${resp.timestamp}`;
           if (seenResponsesRef.current.has(key)) continue;
           seenResponsesRef.current.add(key);
-          if (seenResponsesRef.current.size > 5000) {
-            const entries = [...seenResponsesRef.current];
-            seenResponsesRef.current = new Set(entries.slice(entries.length - 4000));
-          }
 
           newItems.push({
             id: key,
@@ -148,10 +152,21 @@ export function ChatView({
           });
         }
 
+        // Trim seen set periodically
+        if (seenResponsesRef.current.size > 5000) {
+          const entries = [...seenResponsesRef.current];
+          seenResponsesRef.current = new Set(entries.slice(entries.length - 4000));
+        }
+
         if (newItems.length > 0) {
+          // New items are sorted by timestamp already; merge efficiently
+          newItems.sort((a, b) => a.timestamp - b.timestamp);
           setFeed((prev) => {
             const combined = [...prev, ...newItems];
-            combined.sort((a, b) => a.timestamp - b.timestamp);
+            // Only sort if items interleave (new items older than last existing)
+            if (prev.length > 0 && newItems[0].timestamp < prev[prev.length - 1].timestamp) {
+              combined.sort((a, b) => a.timestamp - b.timestamp);
+            }
             return combined;
           });
         }
@@ -160,7 +175,7 @@ export function ChatView({
       }
     };
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(poll, 4000);
     return () => { active = false; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey]);
@@ -292,7 +307,11 @@ export function ChatView({
       </div>
 
       {/* Feed — messages flow top to bottom, auto-scroll to newest */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div
+        ref={feedContainerRef}
+        className="flex-1 overflow-y-auto px-6 py-4"
+        onScroll={handleScroll}
+      >
         {feed.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Radio className="h-8 w-8 text-muted-foreground/30 mb-3" />
@@ -367,13 +386,13 @@ export function ChatView({
   );
 }
 
-function FeedEntry({ item }: { item: FeedItem }) {
+const FeedEntry = memo(function FeedEntry({ item }: { item: FeedItem }) {
   const d = item.data;
 
   if (item.type === "sent") {
     const target = d.target ? String(d.target) : "";
     return (
-      <div className="flex items-start gap-3 border-b border-border/50 pb-2 animate-slide-up">
+      <div className="flex items-start gap-3 border-b border-border/50 pb-2">
         <Send className="h-3.5 w-3.5 mt-1 text-primary shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -416,7 +435,7 @@ function FeedEntry({ item }: { item: FeedItem }) {
   })();
 
   return (
-    <div className="flex items-start gap-3 border-b border-border/50 pb-2 animate-slide-up">
+    <div className="flex items-start gap-3 border-b border-border/50 pb-2">
       {icon}
       <div className="flex-1 min-w-0">
         <span className="text-xs font-semibold uppercase text-muted-foreground">
@@ -444,7 +463,7 @@ function FeedEntry({ item }: { item: FeedItem }) {
       </span>
     </div>
   );
-}
+});
 
 function statusDotColor(type: string): string {
   switch (type) {
