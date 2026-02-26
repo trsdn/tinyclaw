@@ -1,5 +1,5 @@
 import path from 'path';
-import { AgentConfig, TeamConfig } from './types';
+import { AgentConfig, TeamConfig, PipelineConfig } from './types';
 import { log } from './logging';
 
 /**
@@ -93,6 +93,73 @@ export function extractTeammateMentions(
  */
 export function getAgentResetFlag(agentId: string, workspacePath: string): string {
     return path.join(workspacePath, agentId, 'reset_flag');
+}
+
+/**
+ * Get the next agent in a pipeline sequence after the given agent.
+ * Returns null if the agent is the last in the sequence or not found.
+ */
+export function getNextPipelineAgent(pipeline: PipelineConfig, currentAgentId: string): string | null {
+    const idx = pipeline.sequence.indexOf(currentAgentId);
+    if (idx < 0 || idx >= pipeline.sequence.length - 1) return null;
+    return pipeline.sequence[idx + 1];
+}
+
+/**
+ * Check if an agent can loop back to an earlier pipeline step.
+ * Returns the target agent ID if looping is allowed, null otherwise.
+ */
+export function getPipelineLoopTarget(
+    pipeline: PipelineConfig,
+    currentAgentId: string,
+    targetAgentId: string,
+    currentLoops: number,
+): boolean {
+    const maxLoops = pipeline.maxLoops ?? 0;
+    if (maxLoops <= 0 || currentLoops >= maxLoops) return false;
+
+    const currentIdx = pipeline.sequence.indexOf(currentAgentId);
+    const targetIdx = pipeline.sequence.indexOf(targetAgentId);
+    // Only allow looping backward (target earlier in sequence)
+    return currentIdx > 0 && targetIdx >= 0 && targetIdx < currentIdx;
+}
+
+/**
+ * Filter teammate mentions to only allow the next agent in the pipeline sequence.
+ * When maxLoops > 0, also allows sending work back to earlier agents in the sequence.
+ */
+export function filterMentionsForPipeline(
+    mentions: { teammateId: string; message: string }[],
+    pipeline: PipelineConfig,
+    currentAgentId: string,
+    currentLoops: number = 0,
+): { teammateId: string; message: string }[] {
+    const nextAgent = getNextPipelineAgent(pipeline, currentAgentId);
+    const filtered: { teammateId: string; message: string }[] = [];
+    const blocked: string[] = [];
+
+    for (const m of mentions) {
+        if (m.teammateId === nextAgent) {
+            filtered.push(m);
+        } else if (getPipelineLoopTarget(pipeline, currentAgentId, m.teammateId, currentLoops)) {
+            filtered.push(m);
+            log('INFO', `Pipeline loop: @${currentAgentId} → @${m.teammateId} (loop ${currentLoops + 1}/${pipeline.maxLoops})`);
+        } else {
+            blocked.push(m.teammateId);
+        }
+    }
+
+    if (blocked.length > 0) {
+        const allowed = nextAgent ? `@${nextAgent}` : 'none (last step)';
+        const loopInfo = (pipeline.maxLoops ?? 0) > 0 ? ` (loops: ${currentLoops}/${pipeline.maxLoops})` : '';
+        log('WARN', `Pipeline: @${currentAgentId} tried to mention ${blocked.map(id => `@${id}`).join(', ')} — allowed: ${allowed}${loopInfo}`);
+    }
+
+    if (filtered.length === 0 && !nextAgent) {
+        log('INFO', `Pipeline: @${currentAgentId} is the last step — no further mentions allowed`);
+    }
+
+    return filtered;
 }
 
 /**

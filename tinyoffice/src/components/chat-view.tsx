@@ -41,6 +41,9 @@ const STATUS_BAR_EVENTS = new Set([
   "agent_routed",
   "processor_start",
   "message_enqueued",
+  "pipeline_step",
+  "pipeline_complete",
+  "pipeline_loop",
 ]);
 
 interface StatusBarEvent {
@@ -474,6 +477,9 @@ function statusDotColor(type: string): string {
     case "team_chain_end": return "bg-purple-400";
     case "message_enqueued": return "bg-cyan-500";
     case "processor_start": return "bg-primary";
+    case "pipeline_step": return "bg-indigo-500";
+    case "pipeline_complete": return "bg-emerald-500";
+    case "pipeline_loop": return "bg-amber-500";
     default: return "bg-muted-foreground/40";
   }
 }

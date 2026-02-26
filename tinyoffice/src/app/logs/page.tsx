@@ -138,6 +138,9 @@ const EventEntry = memo(function EventEntry({ event }: { event: EventData }) {
     chain_handoff: "bg-orange-500",
     processor_start: "bg-primary",
     message_enqueued: "bg-cyan-500",
+    pipeline_step: "bg-indigo-500",
+    pipeline_complete: "bg-emerald-500",
+    pipeline_loop: "bg-amber-500",
   };
 
   return (

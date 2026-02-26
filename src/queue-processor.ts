@@ -23,7 +23,7 @@ import {
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
-import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
+import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions, getNextPipelineAgent, filterMentionsForPipeline } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
 import { startApiServer } from './server';
 import {
@@ -116,12 +116,6 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             return;
         }
 
-        const agent = agents[agentId];
-        log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
-        if (!isInternal) {
-            emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
-        }
-
         // Determine team context
         let teamContext: { teamId: string; team: TeamConfig } | null = null;
         if (isInternal) {
@@ -140,6 +134,22 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             if (!teamContext) {
                 teamContext = findTeamForAgent(agentId, teams);
             }
+        }
+
+        // Pipeline override: when a team has a pipeline, route the initial
+        // message to the first agent in the sequence instead of the leader.
+        if (!isInternal && isTeamRouted && teamContext?.team.pipeline) {
+            const firstPipelineAgent = teamContext.team.pipeline.sequence[0];
+            if (firstPipelineAgent && agents[firstPipelineAgent] && firstPipelineAgent !== agentId) {
+                log('INFO', `Pipeline: overriding leader routing @${agentId} → @${firstPipelineAgent} (first in sequence)`);
+                agentId = firstPipelineAgent;
+            }
+        }
+
+        const agent = agents[agentId];
+        log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
+        if (!isInternal) {
+            emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
         }
 
         // Check for per-agent reset
@@ -212,6 +222,8 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
 
         // --- Team context: conversation-based message passing ---
 
+        const pipeline = teamContext.team.pipeline;
+
         // Get or create conversation
         let conv: Conversation;
         if (isInternal && messageData.conversationId && conversations.has(messageData.conversationId)) {
@@ -234,20 +246,70 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
                 startTime: Date.now(),
                 outgoingMentions: new Map(),
             };
+            // Initialize pipeline state
+            if (pipeline) {
+                conv.pipelineStep = 0;
+                conv.completedAgents = new Set();
+                log('INFO', `Pipeline enabled: ${pipeline.sequence.join(' → ')}${pipeline.strict ? ' (strict)' : ''}`);
+            }
             conversations.set(convId, conv);
             log('INFO', `Conversation started: ${convId} (team: ${teamContext.team.name})`);
-            emitEvent('team_chain_start', { teamId: teamContext.teamId, teamName: teamContext.team.name, agents: teamContext.team.agents, leader: teamContext.team.leader_agent });
+            emitEvent('team_chain_start', { teamId: teamContext.teamId, teamName: teamContext.team.name, agents: teamContext.team.agents, leader: teamContext.team.leader_agent, pipeline: pipeline ? pipeline.sequence : undefined });
         }
 
         // Record this agent's response
         conv.responses.push({ agentId, response });
         conv.totalMessages++;
         collectFiles(response, conv.files);
+        if (conv.completedAgents) conv.completedAgents.add(agentId);
 
         // Check for teammate mentions
-        const teammateMentions = extractTeammateMentions(
+        let teammateMentions = extractTeammateMentions(
             response, agentId, conv.teamContext.teamId, teams, agents
         );
+
+        // Pipeline enforcement
+        if (pipeline) {
+            const currentLoops = conv.pipelineLoops ?? 0;
+
+            if (pipeline.strict) {
+                // Strict mode: ignore agent mentions, auto-route to next in sequence
+                if (teammateMentions.length > 0) {
+                    log('INFO', `Pipeline strict: ignoring ${teammateMentions.length} mention(s) from @${agentId} — auto-routing instead`);
+                }
+                teammateMentions = [];
+
+                const nextAgent = getNextPipelineAgent(pipeline, agentId);
+                if (nextAgent && conv.totalMessages < conv.maxMessages) {
+                    // Auto-route: include original user message + previous output for context
+                    const pipelineMsg = `[Original request]:\n${conv.originalMessage}\n\n[Output from @${agentId}]:\n${response}`;
+                    teammateMentions = [{ teammateId: nextAgent, message: pipelineMsg }];
+                    log('INFO', `Pipeline auto-route: @${agentId} → @${nextAgent} (step ${(conv.pipelineStep ?? 0) + 1}/${pipeline.sequence.length})`);
+                    emitEvent('pipeline_step', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: nextAgent, step: (conv.pipelineStep ?? 0) + 1, total: pipeline.sequence.length });
+                    conv.pipelineStep = (conv.pipelineStep ?? 0) + 1;
+                } else if (!nextAgent) {
+                    log('INFO', `Pipeline complete: @${agentId} was the last step`);
+                    emitEvent('pipeline_complete', { teamId: conv.teamContext.teamId, steps: pipeline.sequence, totalMessages: conv.totalMessages });
+                }
+            } else {
+                // Non-strict mode: agents use mentions, filtered by pipeline order + loop rules
+                teammateMentions = filterMentionsForPipeline(teammateMentions, pipeline, agentId, currentLoops);
+
+                // Detect loop-backs (mention targets an earlier agent in sequence)
+                for (const m of teammateMentions) {
+                    const targetIdx = pipeline.sequence.indexOf(m.teammateId);
+                    const currentIdx = pipeline.sequence.indexOf(agentId);
+                    if (targetIdx >= 0 && currentIdx >= 0 && targetIdx < currentIdx) {
+                        conv.pipelineLoops = currentLoops + 1;
+                        conv.pipelineStep = targetIdx;
+                        log('INFO', `Pipeline loop-back: @${agentId} → @${m.teammateId} (loop ${conv.pipelineLoops}/${pipeline.maxLoops})`);
+                        emitEvent('pipeline_loop', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: m.teammateId, loop: conv.pipelineLoops, maxLoops: pipeline.maxLoops });
+                    } else if (teammateMentions.length > 0) {
+                        conv.pipelineStep = (conv.pipelineStep ?? 0) + 1;
+                    }
+                }
+            }
+        }
 
         // This branch is done - use atomic lock for increment + enqueue + decrement
         await withConversationLock(conv.id, async () => {
@@ -259,7 +321,9 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
                     log('INFO', `@${agentId} → @${mention.teammateId}`);
                     emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
 
-                    const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
+                    const internalMsg = pipeline?.strict
+                        ? `[Pipeline step from @${agentId}]:\n${mention.message}`
+                        : `[Message from teammate @${agentId}]:\n${mention.message}`;
                     enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
                         channel: messageData.channel,
                         sender: messageData.sender,

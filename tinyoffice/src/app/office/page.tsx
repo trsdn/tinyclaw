@@ -264,6 +264,9 @@ export default function OfficePage() {
           "team_chain_end",
           "message_enqueued",
           "processor_start",
+          "pipeline_step",
+          "pipeline_complete",
+          "pipeline_loop",
         ];
         if (statusTypes.includes(event.type)) {
           setStatusEvents((prev) =>
@@ -554,6 +557,12 @@ function statusColor(type: string): string {
       return "bg-cyan-500";
     case "processor_start":
       return "bg-primary";
+    case "pipeline_step":
+      return "bg-indigo-500";
+    case "pipeline_complete":
+      return "bg-emerald-500";
+    case "pipeline_loop":
+      return "bg-amber-500";
     default:
       return "bg-muted-foreground/40";
   }

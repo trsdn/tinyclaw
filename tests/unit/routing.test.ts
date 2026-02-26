@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAgentRouting, extractTeammateMentions, findTeamForAgent } from '../../src/lib/routing';
+import { parseAgentRouting, extractTeammateMentions, findTeamForAgent, getNextPipelineAgent, filterMentionsForPipeline, getPipelineLoopTarget } from '../../src/lib/routing';
 import { AgentConfig, TeamConfig } from '../../src/lib/types';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -167,5 +167,118 @@ describe('findTeamForAgent', () => {
     const result = findTeamForAgent('coder', multiTeams);
     expect(result).not.toBeNull();
     expect(result!.teamId).toBe('alpha');
+  });
+});
+
+// ── getNextPipelineAgent ─────────────────────────────────────────────────────
+
+describe('getNextPipelineAgent', () => {
+  const pipeline = { sequence: ['coder', 'reviewer', 'designer'] };
+
+  it('returns the next agent in sequence', () => {
+    expect(getNextPipelineAgent(pipeline, 'coder')).toBe('reviewer');
+    expect(getNextPipelineAgent(pipeline, 'reviewer')).toBe('designer');
+  });
+
+  it('returns null for the last agent in sequence', () => {
+    expect(getNextPipelineAgent(pipeline, 'designer')).toBeNull();
+  });
+
+  it('returns null for agents not in the pipeline', () => {
+    expect(getNextPipelineAgent(pipeline, 'unknown')).toBeNull();
+  });
+});
+
+// ── filterMentionsForPipeline ────────────────────────────────────────────────
+
+describe('filterMentionsForPipeline', () => {
+  const pipeline = { sequence: ['coder', 'reviewer', 'designer'] };
+
+  it('allows only the next agent in the pipeline', () => {
+    const mentions = [
+      { teammateId: 'reviewer', message: 'review this' },
+      { teammateId: 'designer', message: 'design this' },
+    ];
+    const result = filterMentionsForPipeline(mentions, pipeline, 'coder');
+    expect(result).toHaveLength(1);
+    expect(result[0].teammateId).toBe('reviewer');
+  });
+
+  it('returns empty when current agent is last in pipeline', () => {
+    const mentions = [
+      { teammateId: 'coder', message: 'start over' },
+    ];
+    const result = filterMentionsForPipeline(mentions, pipeline, 'designer');
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns empty when no mentions match the next agent', () => {
+    const mentions = [
+      { teammateId: 'designer', message: 'skipping ahead' },
+    ];
+    const result = filterMentionsForPipeline(mentions, pipeline, 'coder');
+    expect(result).toHaveLength(0);
+  });
+
+  it('allows the correct mention when it matches next-in-sequence', () => {
+    const mentions = [
+      { teammateId: 'designer', message: 'check the design' },
+    ];
+    const result = filterMentionsForPipeline(mentions, pipeline, 'reviewer');
+    expect(result).toHaveLength(1);
+    expect(result[0].teammateId).toBe('designer');
+  });
+
+  it('allows loop-back when maxLoops > 0 and within limit', () => {
+    const loopPipeline = { sequence: ['coder', 'reviewer', 'designer'], maxLoops: 2 };
+    const mentions = [
+      { teammateId: 'coder', message: 'needs revision' },
+    ];
+    // reviewer (idx 1) → coder (idx 0) is a backward step
+    const result = filterMentionsForPipeline(mentions, loopPipeline, 'reviewer', 0);
+    expect(result).toHaveLength(1);
+    expect(result[0].teammateId).toBe('coder');
+  });
+
+  it('blocks loop-back when maxLoops exhausted', () => {
+    const loopPipeline = { sequence: ['coder', 'reviewer', 'designer'], maxLoops: 2 };
+    const mentions = [
+      { teammateId: 'coder', message: 'needs more revision' },
+    ];
+    // Already at 2 loops, max is 2
+    const result = filterMentionsForPipeline(mentions, loopPipeline, 'reviewer', 2);
+    expect(result).toHaveLength(0);
+  });
+
+  it('blocks loop-back when maxLoops is 0 (default)', () => {
+    const mentions = [
+      { teammateId: 'coder', message: 'go back' },
+    ];
+    const result = filterMentionsForPipeline(mentions, pipeline, 'reviewer', 0);
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ── getPipelineLoopTarget ────────────────────────────────────────────────────
+
+describe('getPipelineLoopTarget', () => {
+  const pipeline = { sequence: ['coder', 'reviewer', 'designer'], maxLoops: 3 };
+
+  it('allows backward mention within loop limit', () => {
+    expect(getPipelineLoopTarget(pipeline, 'designer', 'coder', 0)).toBe(true);
+    expect(getPipelineLoopTarget(pipeline, 'reviewer', 'coder', 2)).toBe(true);
+  });
+
+  it('blocks backward mention when loop limit reached', () => {
+    expect(getPipelineLoopTarget(pipeline, 'designer', 'coder', 3)).toBe(false);
+  });
+
+  it('blocks forward mentions (those are handled by getNextPipelineAgent)', () => {
+    expect(getPipelineLoopTarget(pipeline, 'coder', 'reviewer', 0)).toBe(false);
+  });
+
+  it('blocks when maxLoops is 0', () => {
+    const noLoop = { sequence: ['coder', 'reviewer'], maxLoops: 0 };
+    expect(getPipelineLoopTarget(noLoop, 'reviewer', 'coder', 0)).toBe(false);
   });
 });

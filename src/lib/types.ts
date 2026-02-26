@@ -8,10 +8,29 @@ export interface AgentConfig {
     reasoning_effort?: string; // 'low' | 'medium' | 'high' | 'xhigh' (copilot-sdk only)
 }
 
+export interface PipelineConfig {
+    /** Ordered list of agent IDs that must run in sequence. */
+    sequence: string[];
+    /**
+     * If true, auto-routes to the next agent after each step completes —
+     * agents don't need to mention teammates. If false, agents still use
+     * [@agent: msg] mentions but only the next agent in sequence is allowed.
+     */
+    strict?: boolean;
+    /**
+     * Max number of times the pipeline can loop back (e.g. reviewer sends
+     * work back to coder). Default 0 = no loops allowed. Set to e.g. 3
+     * to allow up to 3 revision cycles.
+     */
+    maxLoops?: number;
+}
+
 export interface TeamConfig {
     name: string;
     agents: string[];
     leader_agent: string;
+    /** Optional pipeline to enforce a strict agent sequence. */
+    pipeline?: PipelineConfig;
 }
 
 export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
@@ -99,6 +118,10 @@ export interface Conversation {
     // Track how many mentions each agent sent out (for inbox draining)
     outgoingMentions: Map<string, number>;
     completed?: boolean;
+    // Pipeline state (when team has pipeline config)
+    pipelineStep?: number;           // current index into pipeline.sequence
+    completedAgents?: Set<string>;   // agents that have finished their step
+    pipelineLoops?: number;          // how many times the pipeline has looped back
 }
 
 export interface ResponseData {

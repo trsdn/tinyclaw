@@ -32,6 +32,11 @@ export interface TeamConfig {
   name: string;
   agents: string[];
   leader_agent: string;
+  pipeline?: {
+    sequence: string[];
+    strict?: boolean;
+    maxLoops?: number;
+  };
 }
 
 export interface Settings {
@@ -224,7 +229,7 @@ export function subscribeToEvents(
     "connected",
     "message_received", "agent_routed", "chain_step_start", "chain_step_done",
     "chain_handoff", "team_chain_start", "team_chain_end", "response_ready",
-    "processor_start", "message_enqueued",
+    "processor_start", "message_enqueued", "pipeline_step", "pipeline_complete", "pipeline_loop",
   ];
 
   let es: EventSource | null = null;
