@@ -11,28 +11,29 @@ import fs from 'fs';
 import path from 'path';
 import { ensureSenderPaired } from '../lib/pairing';
 import { apiHeaders, apiJsonHeaders } from '../lib/api-auth';
+import {
+    SCRIPT_DIR,
+    TINYCLAW_HOME,
+    API_BASE,
+    FILES_DIR,
+    PAIRING_FILE,
+    channelLogFile,
+    ensureDirs,
+    createLogger,
+    pairingMessage,
+    getTeamListText,
+    getAgentListText,
+    processResetCommand,
+    generateMessageId,
+    buildFullMessage,
+    cleanupPendingMessages,
+} from '../lib/channel-common';
 
-const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
-const API_BASE = `http://localhost:${API_PORT}`;
-
-const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
-const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
-const TINYCLAW_HOME = process.env.TINYCLAW_HOME
-    || (fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
-        ? _localTinyclaw
-        : path.join(require('os').homedir(), '.tinyclaw'));
-const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/whatsapp.log');
+const LOG_FILE = channelLogFile('whatsapp');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
-const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
-const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
-const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
-[path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-});
+ensureDirs([path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR]);
 
 interface PendingMessage {
     message: Message;
@@ -92,66 +93,15 @@ const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
 
 // Logger
-function log(level: string, message: string): void {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [${level}] ${message}\n`;
-    console.log(logMessage.trim());
-    fs.appendFileSync(LOG_FILE, logMessage);
-}
+const log = createLogger(LOG_FILE);
 
-// Load teams from settings for /team command
-function getTeamListText(): string {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const teams = settings.teams;
-        if (!teams || Object.keys(teams).length === 0) {
-            return 'No teams configured.\n\nCreate a team with: tinyclaw team add';
-        }
-        let text = '*Available Teams:*\n';
-        for (const [id, team] of Object.entries(teams) as [string, any][]) {
-            text += `\n@${id} - ${team.name}`;
-            text += `\n  Agents: ${team.agents.join(', ')}`;
-            text += `\n  Leader: @${team.leader_agent}`;
-        }
-        text += '\n\nUsage: Start your message with @team_id to route to a team.';
-        return text;
-    } catch {
-        return 'Could not load team configuration.';
-    }
+// WhatsApp-specific formatting: *bold* for headers
+const whatsappBold = (s: string) => `*${s}*`;
+function whatsappTeamListText(): string {
+    return getTeamListText(whatsappBold);
 }
-
-// Load agents from settings for /agent command
-function getAgentListText(): string {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const agents = settings.agents;
-        if (!agents || Object.keys(agents).length === 0) {
-            return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in .tinyclaw/settings.json or run: tinyclaw agent add';
-        }
-        let text = '*Available Agents:*\n';
-        for (const [id, agent] of Object.entries(agents) as [string, any][]) {
-            text += `\n@${id} - ${agent.name}`;
-            text += `\n  Provider: ${agent.provider}/${agent.model}`;
-            text += `\n  Directory: ${agent.working_directory}`;
-            if (agent.system_prompt) text += `\n  Has custom system prompt`;
-            if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
-        }
-        text += '\n\nUsage: Start your message with @agent_id to route to a specific agent.';
-        return text;
-    } catch {
-        return 'Could not load agent configuration.';
-    }
-}
-
-function pairingMessage(code: string): string {
-    return [
-        'This sender is not paired yet.',
-        `Your pairing code: ${code}`,
-        'Ask the TinyClaw owner to approve you with:',
-        `tinyclaw pairing approve ${code}`,
-    ].join('\n');
+function whatsappAgentListText(): string {
+    return getAgentListText(whatsappBold);
 }
 
 // Initialize WhatsApp client
@@ -241,7 +191,7 @@ client.on('message_create', async (message: Message) => {
         }
 
         // Generate unique message ID
-        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const messageId = generateMessageId();
 
         // Download media if present
         if (hasMedia) {
@@ -276,7 +226,7 @@ client.on('message_create', async (message: Message) => {
         // Check for agent list command
         if (message.body.trim().match(/^[!/]agent$/i)) {
             log('INFO', 'Agent list command received');
-            const agentList = getAgentListText();
+            const agentList = whatsappAgentListText();
             await message.reply(agentList);
             return;
         }
@@ -284,7 +234,7 @@ client.on('message_create', async (message: Message) => {
         // Check for team list command
         if (message.body.trim().match(/^[!/]team$/i)) {
             log('INFO', 'Team list command received');
-            const teamList = getTeamListText();
+            const teamList = whatsappTeamListText();
             await message.reply(teamList);
             return;
         }
@@ -297,24 +247,9 @@ client.on('message_create', async (message: Message) => {
         }
         if (resetMatch) {
             log('INFO', 'Per-agent reset command received');
-            const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
             try {
-                const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-                const settings = JSON.parse(settingsData);
-                const agents = settings.agents || {};
-                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
-                const resetResults: string[] = [];
-                for (const agentId of agentArgs) {
-                    if (!agents[agentId]) {
-                        resetResults.push(`Agent '${agentId}' not found.`);
-                        continue;
-                    }
-                    const flagDir = path.join(workspacePath, agentId);
-                    if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                    fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
-                    resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
-                }
-                await message.reply(resetResults.join('\n'));
+                const { results } = processResetCommand(resetMatch[1]);
+                await message.reply(results.join('\n'));
             } catch {
                 await message.reply('Could not process reset command. Check settings.');
             }
@@ -325,11 +260,7 @@ client.on('message_create', async (message: Message) => {
         await chat.sendStateTyping();
 
         // Build message text with file references
-        let fullMessage = messageText;
-        if (downloadedFiles.length > 0) {
-            const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
-            fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
-        }
+        const fullMessage = buildFullMessage(messageText, downloadedFiles);
 
         // Write to queue via API
         await fetch(`${API_BASE}/api/message`, {
@@ -355,12 +286,7 @@ client.on('message_create', async (message: Message) => {
         });
 
         // Clean up old pending messages (older than 10 minutes)
-        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-        for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < tenMinutesAgo) {
-                pendingMessages.delete(id);
-            }
-        }
+        cleanupPendingMessages(pendingMessages);
 
     } catch (error) {
         log('ERROR', `Message handling error: ${(error as Error).message}`);

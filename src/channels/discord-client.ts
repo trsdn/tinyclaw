@@ -9,31 +9,31 @@ import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, Attach
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import https from 'https';
-import http from 'http';
 import { ensureSenderPaired } from '../lib/pairing';
 import { apiHeaders, apiJsonHeaders } from '../lib/api-auth';
+import {
+    API_BASE,
+    FILES_DIR,
+    PAIRING_FILE,
+    channelLogFile,
+    ensureDirs,
+    createLogger,
+    pairingMessage,
+    getTeamListText,
+    getAgentListText,
+    processResetCommand,
+    buildUniqueFilePath,
+    downloadFile,
+    splitMessage,
+    generateMessageId,
+    buildFullMessage,
+    cleanupPendingMessages,
+} from '../lib/channel-common';
 
-const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
-const API_BASE = `http://localhost:${API_PORT}`;
-
-const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
-const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
-const TINYCLAW_HOME = process.env.TINYCLAW_HOME
-    || (fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
-        ? _localTinyclaw
-        : path.join(require('os').homedir(), '.tinyclaw'));
-const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/discord.log');
-const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
-const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
-const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
+const LOG_FILE = channelLogFile('discord');
 
 // Ensure directories exist
-[path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-});
+ensureDirs([path.dirname(LOG_FILE), FILES_DIR]);
 
 // Validate bot token
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -48,151 +48,21 @@ interface PendingMessage {
     timestamp: number;
 }
 
-function sanitizeFileName(fileName: string): string {
-    const baseName = path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-    return baseName.length > 0 ? baseName : 'file.bin';
-}
-
-function buildUniqueFilePath(dir: string, preferredName: string): string {
-    const cleanName = sanitizeFileName(preferredName);
-    const ext = path.extname(cleanName);
-    const stem = path.basename(cleanName, ext);
-    let candidate = path.join(dir, cleanName);
-    let counter = 1;
-    while (fs.existsSync(candidate)) {
-        candidate = path.join(dir, `${stem}_${counter}${ext}`);
-        counter++;
-    }
-    return candidate;
-}
-
-// Download a file from URL to local path
-function downloadFile(url: string, destPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(destPath);
-        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
-
-        function handleResponse(response: http.IncomingMessage): void {
-            if (response.statusCode === 301 || response.statusCode === 302) {
-                const redirectUrl = response.headers.location;
-                if (redirectUrl) {
-                    file.close();
-                    fs.unlinkSync(destPath);
-                    downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
-                    return;
-                }
-            }
-            response.pipe(file);
-            file.on('finish', () => { file.close(); resolve(); });
-        }
-
-        request.on('error', (err) => {
-            fs.unlink(destPath, () => {});
-            reject(err);
-        });
-    });
-}
-
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
 
 // Logger
-function log(level: string, message: string): void {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [${level}] ${message}\n`;
-    console.log(logMessage.trim());
-    fs.appendFileSync(LOG_FILE, logMessage);
+const log = createLogger(LOG_FILE);
+
+// Discord-specific formatting: **bold** for headers, `code` for inline code
+const discordBold = (s: string) => `**${s}**`;
+const discordCode = (s: string) => `\`${s}\``;
+function discordTeamListText(): string {
+    return getTeamListText(discordBold, discordBold, discordCode);
 }
-
-// Load teams from settings for /team command
-function getTeamListText(): string {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const teams = settings.teams;
-        if (!teams || Object.keys(teams).length === 0) {
-            return 'No teams configured.\n\nCreate a team with `tinyclaw team add`.';
-        }
-        let text = '**Available Teams:**\n';
-        for (const [id, team] of Object.entries(teams) as [string, any][]) {
-            text += `\n**@${id}** - ${team.name}`;
-            text += `\n  Agents: ${team.agents.join(', ')}`;
-            text += `\n  Leader: @${team.leader_agent}`;
-        }
-        text += '\n\nUsage: Start your message with `@team_id` to route to a team.';
-        return text;
-    } catch {
-        return 'Could not load team configuration.';
-    }
-}
-
-// Load agents from settings for /agent command
-function getAgentListText(): string {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const agents = settings.agents;
-        if (!agents || Object.keys(agents).length === 0) {
-            return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in `.tinyclaw/settings.json` or run `tinyclaw agent add`.';
-        }
-        let text = '**Available Agents:**\n';
-        for (const [id, agent] of Object.entries(agents) as [string, any][]) {
-            text += `\n**@${id}** - ${agent.name}`;
-            text += `\n  Provider: ${agent.provider}/${agent.model}`;
-            text += `\n  Directory: ${agent.working_directory}`;
-            if (agent.system_prompt) text += `\n  Has custom system prompt`;
-            if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
-        }
-        text += '\n\nUsage: Start your message with `@agent_id` to route to a specific agent.';
-        return text;
-    } catch {
-        return 'Could not load agent configuration.';
-    }
-}
-
-// Split long messages for Discord's 2000 char limit
-function splitMessage(text: string, maxLength = 2000): string[] {
-    if (text.length <= maxLength) {
-        return [text];
-    }
-
-    const chunks: string[] = [];
-    let remaining = text;
-
-    while (remaining.length > 0) {
-        if (remaining.length <= maxLength) {
-            chunks.push(remaining);
-            break;
-        }
-
-        // Try to split at a newline boundary
-        let splitIndex = remaining.lastIndexOf('\n', maxLength);
-
-        // Fall back to space boundary
-        if (splitIndex <= 0) {
-            splitIndex = remaining.lastIndexOf(' ', maxLength);
-        }
-
-        // Hard-cut if no good boundary found
-        if (splitIndex <= 0) {
-            splitIndex = maxLength;
-        }
-
-        chunks.push(remaining.substring(0, splitIndex));
-        remaining = remaining.substring(splitIndex).replace(/^\n/, '');
-    }
-
-    return chunks;
-}
-
-function pairingMessage(code: string): string {
-    return [
-        'This sender is not paired yet.',
-        `Your pairing code: ${code}`,
-        'Ask the TinyClaw owner to approve you with:',
-        `tinyclaw pairing approve ${code}`,
-    ].join('\n');
+function discordAgentListText(): string {
+    return getAgentListText(discordBold, discordBold, discordCode);
 }
 
 // Initialize Discord client
@@ -238,7 +108,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         const sender = message.author.username;
 
         // Generate unique message ID
-        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const messageId = generateMessageId();
 
         // Download any attachments
         const downloadedFiles: string[] = [];
@@ -276,7 +146,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Check for agent list command
         if (message.content.trim().match(/^[!/]agent$/i)) {
             log('INFO', 'Agent list command received');
-            const agentList = getAgentListText();
+            const agentList = discordAgentListText();
             await message.reply(agentList);
             return;
         }
@@ -284,7 +154,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Check for team list command
         if (message.content.trim().match(/^[!/]team$/i)) {
             log('INFO', 'Team list command received');
-            const teamList = getTeamListText();
+            const teamList = discordTeamListText();
             await message.reply(teamList);
             return;
         }
@@ -297,24 +167,9 @@ client.on(Events.MessageCreate, async (message: Message) => {
         }
         if (resetMatch) {
             log('INFO', 'Per-agent reset command received');
-            const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
             try {
-                const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-                const settings = JSON.parse(settingsData);
-                const agents = settings.agents || {};
-                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
-                const resetResults: string[] = [];
-                for (const agentId of agentArgs) {
-                    if (!agents[agentId]) {
-                        resetResults.push(`Agent '${agentId}' not found.`);
-                        continue;
-                    }
-                    const flagDir = path.join(workspacePath, agentId);
-                    if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                    fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
-                    resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
-                }
-                await message.reply(resetResults.join('\n'));
+                const { results } = processResetCommand(resetMatch[1]);
+                await message.reply(results.join('\n'));
             } catch {
                 await message.reply('Could not process reset command. Check settings.');
             }
@@ -325,11 +180,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         await (message.channel as DMChannel).sendTyping();
 
         // Build message text with file references
-        let fullMessage = messageText;
-        if (downloadedFiles.length > 0) {
-            const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
-            fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
-        }
+        const fullMessage = buildFullMessage(messageText, downloadedFiles);
 
         // Write to queue via API
         await fetch(`${API_BASE}/api/message`, {
@@ -355,12 +206,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         });
 
         // Clean up old pending messages (older than 10 minutes)
-        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-        for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < tenMinutesAgo) {
-                pendingMessages.delete(id);
-            }
-        }
+        cleanupPendingMessages(pendingMessages);
 
     } catch (error) {
         log('ERROR', `Message handling error: ${(error as Error).message}`);
@@ -421,7 +267,7 @@ async function checkOutgoingQueue(): Promise<void> {
 
                     // Split message if needed (Discord 2000 char limit)
                     if (responseText) {
-                        const chunks = splitMessage(responseText);
+                        const chunks = splitMessage(responseText, 2000);
 
                         if (chunks.length > 0) {
                             if (pending) {
